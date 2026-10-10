@@ -832,7 +832,8 @@ function imageParams() {
   let size = S.imgSize;
   if (size === 'auto') size = info.xl ? '1024x1024' : '512x512';
   const [width, height] = size.split('x').map(Number);
-  const steps = +S.imgSteps || (info.fast ? 4 : 20);
+  // SD-Turbo/SDXL-Turbo look good after a single step; other distilled models want about 4
+  const steps = +S.imgSteps || (/turbo/i.test((info.name || '') + (info.file || '')) ? 1 : info.fast ? 4 : 20);
   const cfg = +S.cfg || (info.fast ? 1 : 7);
   return { width, height, steps, cfg, size, count: +S.imgCount || 1 };
 }
