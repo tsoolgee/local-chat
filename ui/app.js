@@ -445,19 +445,26 @@ function renderWelcome() {
     $('#wRefresh').onclick = async () => { await refreshModels(); renderEngine(); if (models.length) toggleModelMenu(); };
     return;
   }
-  let sub = 'במה אפשר לעזור היום?';
-  if (engine.state === 'idle' || !engine.model) sub = 'בחרו מודל בתפריט למעלה כדי להתחיל.';
-  else if (engine.state === 'loading') sub = 'המודל נטען לזיכרון… אפשר כבר לכתוב.';
-  else if (engine.state === 'error') sub = 'טעינת המודל נכשלה.';
-  const sugg = [
+  const imgMode = S.mode === 'image';
+  const e = imgMode ? imgEngine() : engine;
+  let sub = imgMode ? 'תארו תמונה ואצור אותה.' : 'במה אפשר לעזור היום?';
+  if (e.state === 'idle' || !e.model) sub = imgMode ? 'בחרו מודל תמונות בתפריט למעלה.' : 'בחרו מודל בתפריט למעלה כדי להתחיל.';
+  else if (e.state === 'loading') sub = 'המודל נטען לזיכרון… אפשר כבר לכתוב.';
+  else if (e.state === 'error') sub = 'טעינת המודל נכשלה.';
+  const sugg = imgMode ? [
+    ['חתול ג\'ינג\'י', 'ישן על אדן חלון בשקיעה, צילום'],
+    ['נוף הררי', 'עם אגם ושלג, ציור שמן'],
+    ['בית קפה', 'ברחוב ירושלמי עתיק, אור בוקר'],
+    ['רובוט חמוד', 'משחק בכדור, איור תלת-ממדי'],
+  ] : [
     ['הסבר לי', 'איך עובד מודל שפה, בפשטות'],
     ['כתוב לי', 'מכתב תודה קצר למורה'],
     ['עזור לי בקוד', 'פונקציית פייתון שממיינת רשימה של מילונים'],
     ['תרגם', 'את המשפט "Knowledge is power" לעברית'],
   ];
-  w.innerHTML = `<img class="logo" src="/logo.png" alt=""><h1>${engine.state === 'ready' ? 'שלום! 👋' : 'צ\'אט מקומי'}</h1><p>${esc(sub)}</p>` +
-    (engine.state === 'error' ? `<div class="err-box" style="text-align:start;margin-bottom:16px">${esc(engine.error || '')}</div>` : '') +
-    (engine.state !== 'idle' && engine.model ? '<div class="suggestions">' + sugg.map(s => `<button class="sugg"><b>${esc(s[0])}</b><span>${esc(s[1])}</span></button>`).join('') + '</div>' : '');
+  w.innerHTML = `<img class="logo" src="/logo.png" alt=""><h1>${e.state === 'ready' ? (imgMode ? 'יצירת תמונות 🎨' : 'שלום! 👋') : 'צ\'אט מקומי'}</h1><p>${esc(sub)}</p>` +
+    (e.state === 'error' ? `<div class="err-box" style="text-align:start;margin-bottom:16px">${esc(e.error || '')}</div>` : '') +
+    (e.state !== 'idle' && e.model ? '<div class="suggestions">' + sugg.map(s => `<button class="sugg"><b>${esc(s[0])}</b><span>${esc(s[1])}</span></button>`).join('') + '</div>' : '');
   w.querySelectorAll('.sugg').forEach((b, i) => b.onclick = () => { $('#input').value = sugg[i][0] + ' ' + sugg[i][1]; autosize(); send(); });
 }
 

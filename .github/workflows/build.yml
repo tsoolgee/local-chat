@@ -60,7 +60,10 @@ jobs:
         if: ${{ inputs.smoke_test }}
         shell: pwsh
         run: |
-          $root = (Resolve-Path "pkg/LocalChat").Path
+          # run from a Hebrew-named folder, like a real user might
+          $root = Join-Path $env:RUNNER_TEMP "בדיקה\LocalChat"
+          New-Item -ItemType Directory -Force (Split-Path $root) | Out-Null
+          Copy-Item -Recurse pkg/LocalChat (Split-Path $root)
           curl.exe -sSL -o "$root/מודלים/SmolLM2-360M-Instruct-Q8_0.gguf" "https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q8_0.gguf"
           curl.exe -sSL -o "$root/מודלים/תמונות/tiny-sd-turbo_q8_0.gguf" "https://huggingface.co/akleine/tiny-sd-turbo_q8_0/resolve/main/tiny-sd-turbo_q8_0.gguf"
           Start-Process "$root/LocalChat.exe" -ArgumentList "--no-window"

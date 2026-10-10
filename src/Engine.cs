@@ -208,7 +208,8 @@ namespace LocalChat
                     RedirectStandardError = true,
                     StandardOutputEncoding = Encoding.UTF8,
                     StandardErrorEncoding = Encoding.UTF8,
-                    WorkingDirectory = Path.GetDirectoryName(_exe),
+                    // stable-diffusion.cpp opens files with narrow (ANSI) paths, so it runs from the model folder with bare file names.
+                    WorkingDirectory = _kind == EngineKind.Image ? Path.GetDirectoryName(path) : Path.GetDirectoryName(_exe),
                 };
                 Log.Write("Starting " + _kind + " engine: " + args);
                 var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
@@ -257,8 +258,8 @@ namespace LocalChat
             }
             // Split models (FLUX, SD3, Z-Image…) come with text encoders: the main file is then a bare diffusion model.
             bool split = helpers.Any(h => h.flag == "--clip_l" || h.flag == "--t5xxl" || h.flag == "--llm");
-            a.Append(split ? "--diffusion-model " : "-m ").Append(Q(path));
-            foreach (var h in helpers) a.Append(' ').Append(h.flag).Append(' ').Append(Q(h.file));
+            a.Append(split ? "--diffusion-model " : "-m ").Append(Q(NarrowSafe(path)));
+            foreach (var h in helpers) a.Append(' ').Append(h.flag).Append(' ').Append(Q(NarrowSafe(h.file)));
             a.Append(" --listen-ip 127.0.0.1 --listen-port ").Append(Port);
             if (threads > 0) a.Append(" -t ").Append(threads);
             a.Append(" --mmap --diffusion-fa");
@@ -266,6 +267,19 @@ namespace LocalChat
         }
 
         static string Q(string s) => "\"" + s + "\"";
+
+        /// A name the ANSI file APIs can open: the bare file name (relative to the working folder) when it is ASCII, else the 8.3 short path.
+        static string NarrowSafe(string full)
+        {
+            var name = Path.GetFileName(full);
+            if (name.All(c => c < 128)) return name;
+            var sb = new StringBuilder(1024);
+            if (GetShortPathName(full, sb, sb.Capacity) > 0 && sb.ToString().All(c => c < 128)) return sb.ToString();
+            return full;
+        }
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        static extern int GetShortPathName(string longPath, StringBuilder shortPath, int bufferSize);
 
         void AddLog(string line, int gen)
         {
