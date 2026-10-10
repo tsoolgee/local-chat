@@ -65,7 +65,7 @@ jobs:
           New-Item -ItemType Directory -Force (Split-Path $root) | Out-Null
           Copy-Item -Recurse pkg/LocalChat (Split-Path $root)
           curl.exe -sSL -o "$root/מודלים/SmolLM2-360M-Instruct-Q8_0.gguf" "https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q8_0.gguf"
-          curl.exe -sSL -o "$root/מודלים/תמונות/tiny-sd-turbo_q8_0.gguf" "https://huggingface.co/akleine/tiny-sd-turbo_q8_0/resolve/main/tiny-sd-turbo_q8_0.gguf"
+          curl.exe -sSL -o "$root/מודלים/תמונות/sd_turbo-f16-q8_0.gguf" "https://huggingface.co/Green-Sky/SD-Turbo-GGUF/resolve/main/sd_turbo-f16-q8_0.gguf"
           Start-Process "$root/LocalChat.exe" -ArgumentList "--no-window"
           Start-Sleep 5
           $base = "http://localhost:47800/api"
@@ -75,7 +75,7 @@ jobs:
           "chat engine: $($s.state) $($s.error)"
           $chat = @{ messages = @(@{ role = 'user'; content = 'Say hi in five words.' }); max_tokens = 30 } | ConvertTo-Json -Depth 5
           (irm "http://127.0.0.1:$($s.port)/v1/chat/completions" -Method Post -Body $chat -ContentType 'application/json').choices[0].message.content
-          irm "$base/image-load" -Method Post -Body '{"file":"תמונות\\tiny-sd-turbo_q8_0.gguf"}' -ContentType 'application/json; charset=utf-8'
+          irm "$base/image-load" -Method Post -Body '{"file":"תמונות\\sd_turbo-f16-q8_0.gguf"}' -ContentType 'application/json; charset=utf-8'
           for ($i = 0; $i -lt 90; $i++) { $s = irm "$base/state"; if ($s.image.state -ne 'loading') { break }; Start-Sleep 2 }
           "image engine: $($s.image.state) $($s.image.error)"
           if ($s.image.state -ne 'ready') { irm "$base/image-log"; exit 1 }
