@@ -345,3 +345,43 @@ pre.log { direction: ltr; text-align: left; font-size: 12px; max-height: 60vh; o
 .gen-prompt { font-size: 12.5px; color: var(--text-faint); margin-top: 6px; direction: ltr; text-align: left; max-width: 640px; }
 .lightbox { position: fixed; inset: 0; z-index: 70; background: rgba(0, 0, 0, .85); display: grid; place-items: center; cursor: zoom-out; animation: fadeIn .15s; }
 .lightbox img { max-width: 94vw; max-height: 94vh; border-radius: 10px; }
+
+/* ---------- model store ---------- */
+.store-card { width: min(860px, 100%); height: min(88vh, 900px); }
+.store-tabs { display: flex; align-items: center; gap: 4px; padding: 4px 18px 10px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.tab { border: 0; background: transparent; padding: 7px 14px; border-radius: 99px; color: var(--text-dim); font-weight: 600; font-size: 14px; }
+.tab:hover { background: var(--bg-hover); color: var(--text); }
+.tab.on { background: var(--text); color: var(--bg); }
+.disk { font-size: 12.5px; color: var(--text-faint); }
+.store-body { padding-top: 14px; }
+.store-intro { font-size: 13.5px; color: var(--text-dim); margin: 0 0 12px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; padding-bottom: 12px; }
+.card { border: 1px solid var(--border); border-radius: 16px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; background: var(--bg-elev); transition: border-color .15s; }
+.card:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.card.installed { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
+.card h4 { margin: 0; font-size: 16px; direction: ltr; text-align: right; }
+.card .desc { font-size: 13.5px; color: var(--text-dim); flex: 1; line-height: 1.55; }
+.card .meta { display: flex; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--text-faint); align-items: center; }
+.card .meta .m { background: var(--bg-hover); padding: 1px 8px; border-radius: 99px; }
+.card .meta .m.bad { background: rgba(239, 68, 68, .14); color: var(--danger); }
+.tag.purple { background: rgba(124, 58, 237, .15); color: #a78bfa; }
+.tag.blue { background: rgba(59, 130, 246, .15); color: #60a5fa; }
+.card .opt { font-size: 13px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.card .opt input { accent-color: var(--accent); }
+.card .actions { display: flex; gap: 6px; align-items: center; }
+.card .actions .btn { padding: 6px 14px; font-size: 13.5px; }
+.prog { height: 6px; border-radius: 99px; background: var(--bg-hover); overflow: hidden; }
+.prog > div { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .4s; }
+.prog-text { font-size: 12px; color: var(--text-faint); display: flex; justify-content: space-between; gap: 8px; }
+.card .err { font-size: 12.5px; color: var(--danger); white-space: pre-wrap; }
+.url-box { display: flex; flex-direction: column; gap: 10px; max-width: 640px; }
+.url-box input, .url-box select { font: inherit; color: var(--text); background: var(--bg-input); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; outline: 0; }
+.url-box input:focus { border-color: var(--accent); }
+.url-box .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.url-box .row input { flex: 1; min-width: 240px; }
+.dl-list { margin-top: 18px; display: flex; flex-direction: column; gap: 10px; }
+.dl-item { border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }
+.dl-item .top { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.dl-item .top b { flex: 1; direction: ltr; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-badge { margin-inline-start: auto; font-size: 11.5px; font-weight: 700; background: var(--accent); color: #fff; border-radius: 99px; padding: 0 7px; }
+.store-note { font-size: 12.5px; color: var(--text-faint); border-top: 1px solid var(--border); padding-top: 10px; margin-top: 6px; }

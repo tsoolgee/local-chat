@@ -136,6 +136,7 @@ function openSettings() {
   $('#setNeg').value = S.negative || '';
   $('#setCfg').value = S.cfg;
   $('#setTranslate').value = String(S.translate);
+  $('#setProxy').value = S.proxy || '';
   showModal('settings');
 }
 
@@ -177,6 +178,7 @@ async function submitSettings() {
     negative: $('#setNeg').value.trim(),
     cfg: Math.max(0, num($('#setCfg').value, 0)),
     translate: +$('#setTranslate').value,
+    proxy: $('#setProxy').value.trim(),
   };
   const engineChanged = patch.ctx !== S.ctx || patch.threads !== S.threads;
   await saveSettings(patch);
@@ -298,6 +300,7 @@ async function toggleModelMenu() {
   }
   menu.append(el('div', 'menu-sep'));
   const add = (icon, text, fn, cls) => { const b = el('button', 'menu-item ' + (cls || ''), icon + '<span class="mi-main">' + text + '</span>'); b.onclick = () => { closeMenus(); fn(); }; menu.append(b); };
+  add(ICONS.download, 'הורדת מודלים…', () => openStore(S.mode === 'image' ? 'image' : 'chat'));
   add(ICONS.folder, 'פתיחת תיקיית המודלים', () => api('open-models', { method: 'POST' }));
   add(ICONS.refresh, 'רענון הרשימה', () => toggleModelMenu());
   if (engine.state !== 'idle' && engine.model) add(ICONS.power, 'פריקת מודל השיחה מהזיכרון', async () => { if (S.mode !== 'image') stopStreaming(); await api('unload', { method: 'POST' }); pollState(); }, 'danger');
@@ -436,11 +439,11 @@ function renderWelcome() {
   if (!show) return;
   if (!models.length) {
     w.innerHTML = `<img class="logo" src="/logo.png" alt=""><h1>ברוכים הבאים</h1><p>כדי להתחיל צריך מודל אחד לפחות.</p>
-      <div class="setup"><b>איך מוסיפים מודל:</b><ol>
-      <li>מורידים קובץ מודל בפורמט <code>.gguf</code> (למשל מ-Hugging Face).</li>
-      <li>שמים אותו בתיקייה <code>מודלים</code> שליד התוכנה.</li>
-      <li>לוחצים "רענון" ובוחרים את המודל בתפריט למעלה.</li></ol>
-      <div class="row"><button class="btn primary" id="wOpen">פתיחת תיקיית המודלים</button><button class="btn" id="wRefresh">רענון</button></div></div>`;
+      <div class="setup"><b>שתי דרכים להוסיף מודל:</b><ol>
+      <li><b>מתוך התוכנה:</b> לוחצים "הורדת מודלים" ובוחרים מודל מהרשימה. הוא ייטען לבד בסוף ההורדה.</li>
+      <li><b>ידנית:</b> שמים קובץ <code>.gguf</code> בתיקייה <code>מודלים</code> שליד התוכנה ולוחצים "רענון".</li></ol>
+      <div class="row"><button class="btn primary" id="wStore">הורדת מודלים</button><button class="btn" id="wOpen">פתיחת תיקיית המודלים</button><button class="btn" id="wRefresh">רענון</button></div></div>`;
+    $('#wStore').onclick = () => openStore('chat');
     $('#wOpen').onclick = () => api('open-models', { method: 'POST' });
     $('#wRefresh').onclick = async () => { await refreshModels(); renderEngine(); if (models.length) toggleModelMenu(); };
     return;
@@ -829,12 +832,18 @@ async function toEnglishPrompt(text, signal) {
 function imageParams() {
   const ie = imgEngine();
   const info = imageModels.find(x => x.file === ie.model) || {};
+  const id = ((info.name || '') + ' ' + (info.file || '')).toLowerCase();
+  // Per-family defaults: [size, steps, cfg]
+  let def;
+  if (/z[-_ ]?image/.test(id)) def = ['768x768', 8, 1];                         // big and slow on a CPU: keep it moderate
+  else if (/sd[-_ ]?turbo|sdxl[-_ ]?turbo|sd_xl_turbo/.test(id)) def = ['512x512', 1, 1]; // one step is enough
+  else if (info.fast) def = [info.xl ? '1024x1024' : '512x512', 4, 1];          // lightning / lcm / schnell / hyper
+  else def = [info.xl ? '1024x1024' : '512x512', info.xl ? 25 : 20, 7];
   let size = S.imgSize;
-  if (size === 'auto') size = info.xl ? '1024x1024' : '512x512';
+  if (size === 'auto') size = def[0];
   const [width, height] = size.split('x').map(Number);
-  // SD-Turbo/SDXL-Turbo look good after a single step; other distilled models want about 4
-  const steps = +S.imgSteps || (/turbo/i.test((info.name || '') + (info.file || '')) ? 1 : info.fast ? 4 : 20);
-  const cfg = +S.cfg || (info.fast ? 1 : 7);
+  const steps = +S.imgSteps || def[1];
+  const cfg = +S.cfg || def[2];
   return { width, height, steps, cfg, size, count: +S.imgCount || 1 };
 }
 
@@ -987,6 +996,7 @@ function wire() {
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
       if (!$('#lightbox').classList.contains('hidden')) $('#lightbox').classList.add('hidden');
+      else if (!$('#store').classList.contains('hidden')) closeStore();
       else if (!$('#modal').classList.contains('hidden')) closeModal();
       else if (streaming) stopStreaming();
       else closeMenus();

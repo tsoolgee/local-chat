@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "id": "qwen3.5-2b", "kind": "chat", "name": "Qwen3.5 2B", "folder": "Qwen3.5-2B",
+      "desc": "קטן ומהיר מאוד. מתאים למחשב חלש, לשאלות פשוטות ולתרגום קצר.",
+      "tags": ["fast"], "ram": 3, "speed": "מהיר מאוד",
+      "files": [
+        { "name": "Qwen3.5-2B-Q4_K_M.gguf", "size": 1280835840, "url": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf" },
+        { "name": "mmproj-F16.gguf", "size": 668227264, "url": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/mmproj-F16.gguf", "optional": "vision" }
+      ]
+    },
+    {
+      "id": "qwen3.5-4b", "kind": "chat", "name": "Qwen3.5 4B", "folder": "Qwen3.5-4B",
+      "desc": "קל ומהיר, וחכם יחסית לגודלו. בחירה טובה למחשב עם 8GB זיכרון.",
+      "tags": ["fast"], "ram": 5, "speed": "מהיר",
+      "files": [
+        { "name": "Qwen3.5-4B-Q4_K_M.gguf", "size": 2740937888, "url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf" },
+        { "name": "mmproj-F16.gguf", "size": 672423616, "url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/mmproj-F16.gguf", "optional": "vision" }
+      ]
+    },
+    {
+      "id": "gemma-4-e4b", "kind": "chat", "name": "Gemma 4 E4B", "folder": "Gemma-4-E4B",
+      "desc": "מודל קטן של גוגל עם עברית טובה. מהיר ונעים לשיחה יומיומית.",
+      "tags": ["hebrew", "fast"], "ram": 7, "speed": "מהיר",
+      "files": [
+        { "name": "gemma-4-E4B-it-Q4_K_M.gguf", "size": 4977171584, "url": "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf" },
+        { "name": "mmproj-F16.gguf", "size": 990372672, "url": "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/mmproj-F16.gguf", "optional": "vision" }
+      ]
+    },
+    {
+      "id": "qwen3.5-9b", "kind": "chat", "name": "Qwen3.5 9B", "folder": "Qwen3.5-9B",
+      "desc": "המומלץ להתחלה: איזון טוב בין חוכמה למהירות. יודע \"לחשוב\" לפני שהוא עונה, טוב בקוד ובחשבון.",
+      "tags": ["recommended"], "ram": 9, "speed": "בינוני",
+      "files": [
+        { "name": "Qwen3.5-9B-Q4_K_M.gguf", "size": 5680522464, "url": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf" },
+        { "name": "mmproj-F16.gguf", "size": 918166080, "url": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/mmproj-F16.gguf", "optional": "vision" }
+      ]
+    },
+    {
+      "id": "gemma-4-12b", "kind": "chat", "name": "Gemma 4 12B", "folder": "Gemma-4-12B",
+      "desc": "עברית מצוינת וכתיבה טבעית. מתאים לניסוח, סיכום ותרגום. איטי יותר.",
+      "tags": ["hebrew", "recommended"], "ram": 11, "speed": "בינוני-איטי",
+      "files": [
+        { "name": "gemma-4-12b-it-Q4_K_M.gguf", "size": 7121861440, "url": "https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/main/gemma-4-12b-it-Q4_K_M.gguf" },
+        { "name": "mmproj-F16.gguf", "size": 175115840, "url": "https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/main/mmproj-F16.gguf", "optional": "vision" }
+      ]
+    },
+    {
+      "id": "dictalm-3-12b", "kind": "chat", "name": "DictaLM 3.0 12B", "folder": "DictaLM-3.0-12B",
+      "desc": "מודל עברי של מכון דיקטה, אומן במיוחד על טקסטים בעברית. כדאי לנסות אם העברית של שאר המודלים לא מספיקה לכם.",
+      "tags": ["hebrew"], "ram": 11, "speed": "בינוני-איטי",
+      "files": [
+        { "name": "DictaLM-3.0-Nemotron-12B-Instruct-Q4_K_M.gguf", "size": 7494495200, "url": "https://huggingface.co/dicta-il/DictaLM-3.0-Nemotron-12B-Instruct-GGUF/resolve/main/DictaLM-3.0-Nemotron-12B-Instruct-Q4_K_M.gguf" }
+      ]
+    },
+    {
+      "id": "gemma-4-26b-a4b", "kind": "chat", "name": "Gemma 4 26B-A4B", "folder": "Gemma-4-26B-A4B",
+      "desc": "מודל MoE: חכם כמו מודל גדול אבל מפעיל רק חלק קטן ממנו בכל מילה, ולכן מהיר יחסית. דורש 32GB.",
+      "tags": ["hebrew", "smart"], "ram": 20, "speed": "בינוני",
+      "files": [
+        { "name": "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf", "size": 16947541728, "url": "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf" },
+        { "name": "mmproj-F16.gguf", "size": 1193058784, "url": "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/mmproj-F16.gguf", "optional": "vision" }
+      ]
+    },
+    {
+      "id": "qwen3.5-35b-a3b", "kind": "chat", "name": "Qwen3.5 35B-A3B", "folder": "Qwen3.5-35B-A3B",
+      "desc": "החכם ביותר שרץ טוב על מחשב עם 32GB. מודל MoE שמפעיל רק 3B בכל מילה, ולכן מהיר בהרבה ממה שהגודל מרמז.",
+      "tags": ["smart"], "ram": 26, "speed": "בינוני",
+      "files": [
+        { "name": "Qwen3.5-35B-A3B-Q4_K_M.gguf", "size": 22016023168, "url": "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-Q4_K_M.gguf" },
+        { "name": "mmproj-F16.gguf", "size": 899283648, "url": "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf", "optional": "vision" }
+      ]
+    },
+    {
+      "id": "sd-turbo", "kind": "image", "name": "SD-Turbo", "folder": "SD-Turbo",
+      "desc": "הכי מהיר: תמונה 512×512 בצעד אחד, בערך דקה על מעבד. מתאים להתחלה.",
+      "tags": ["recommended", "fast"], "ram": 4, "speed": "מהיר",
+      "files": [
+        { "name": "sd_turbo-f16-q8_0.gguf", "size": 2023745376, "url": "https://huggingface.co/Green-Sky/SD-Turbo-GGUF/resolve/main/sd_turbo-f16-q8_0.gguf" }
+      ]
+    },
+    {
+      "id": "sdxl-turbo", "kind": "image", "name": "SDXL-Turbo", "folder": "SDXL-Turbo",
+      "desc": "איכות ופרטים טובים יותר מ-SD-Turbo, עדיין בצעד אחד. 512×512.",
+      "tags": ["fast"], "ram": 7, "speed": "בינוני",
+      "files": [
+        { "name": "sd_xl_turbo_1.0.q8_0.gguf", "size": 4098988672, "url": "https://huggingface.co/OlegSkutte/sdxl-turbo-GGUF/resolve/main/sd_xl_turbo_1.0.q8_0.gguf" }
+      ]
+    },
+    {
+      "id": "z-image-turbo", "kind": "image", "name": "Z-Image Turbo", "folder": "Z-Image-Turbo",
+      "desc": "האיכותי ביותר: מבין תיאורים מורכבים ואפילו טקסט בתמונה. איטי על מעבד (כמה דקות לתמונה).",
+      "tags": ["smart"], "ram": 12, "speed": "איטי",
+      "files": [
+        { "name": "z_image_turbo-Q4_0.gguf", "size": 3470775264, "url": "https://huggingface.co/wbruna/Z-Image-Turbo-sdcpp-GGUF/resolve/main/z_image_turbo-Q4_0.gguf" },
+        { "name": "qwen_3_4b-Q8_0.gguf", "size": 4273904096, "url": "https://huggingface.co/wbruna/Z-Image-Turbo-sdcpp-GGUF/resolve/main/qwen_3_4b-Q8_0.gguf" },
+        { "name": "ae-f16.gguf", "size": 167656704, "url": "https://huggingface.co/wbruna/Z-Image-Turbo-sdcpp-GGUF/resolve/main/ae-f16.gguf" }
+      ]
+    }
+  ]
+}

@@ -67,6 +67,7 @@ namespace LocalChat
                 Server.Start();
                 File.WriteAllText(Path.Combine(DataDir, "port.txt"), Server.Port.ToString());
 
+                System.Threading.ThreadPool.QueueUserWorkItem(_ => Downloader.CatalogJson()); // warm the catalog cache
                 var settings = Store.ReadSettingsDict();
                 Engine.AutoLoad(settings);
                 ImageEngine.AutoLoad(settings);

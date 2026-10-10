@@ -27,6 +27,11 @@
     </div>
     <nav id="chatList"></nav>
     <div class="side-bottom">
+      <button class="side-link" id="openStore">
+        <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+        <span>הורדת מודלים</span>
+        <span class="dl-badge hidden" id="dlBadge"></span>
+      </button>
       <button class="side-link" id="openSettings">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
         <span>הגדרות</span>
@@ -169,6 +174,11 @@
         </label>
       </div>
       <p class="note">שינוי בהגדרות המנוע ייכנס לתוקף בטעינה הבאה של המודל.</p>
+      <h3>הורדות</h3>
+      <label class="field">
+        <span>פרוקסי להורדת מודלים (ריק = ישיר). שימושי כשסינון האינטרנט חוסם את Hugging Face</span>
+        <input type="text" id="setProxy" dir="ltr" placeholder="http://127.0.0.1:10809">
+      </label>
       <h3>תמונות</h3>
       <label class="field">
         <span>מה לא להציג בתמונה (negative prompt, באנגלית)</span>
@@ -217,6 +227,23 @@
   </div>
 </div>
 
+<div id="store" class="modal hidden">
+  <div class="modal-card store-card">
+    <div class="modal-head">
+      <h2>הורדת מודלים</h2>
+      <button class="icon-btn" data-close-store title="סגירה"><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div class="store-tabs">
+      <button class="tab on" data-tab="chat">מודלי שיחה</button>
+      <button class="tab" data-tab="image">מודלי תמונות</button>
+      <button class="tab" data-tab="url">קישור משלכם</button>
+      <span class="top-spacer"></span>
+      <span class="disk" id="diskInfo"></span>
+    </div>
+    <div class="modal-body store-body" id="storeBody"></div>
+  </div>
+</div>
+
 <div id="toast" class="toast hidden"></div>
 <div id="lightbox" class="lightbox hidden"><img alt=""></div>
 
@@ -224,5 +251,6 @@
 <script src="/vendor/purify.min.js"></script>
 <script src="/vendor/highlight.min.js"></script>
 <script src="/app.js"></script>
+<script src="/store.js"></script>
 </body>
 </html>

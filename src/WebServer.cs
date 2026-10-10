@@ -78,6 +78,28 @@ namespace LocalChat
                 return;
             }
             if (route == "image-models") { SendJson(res, Engine.ListImageModels()); return; }
+            if (route == "catalog") { SendText(res, Downloader.CatalogWithStatus(), "application/json; charset=utf-8"); return; }
+            if (route == "downloads") { SendText(res, Downloader.Status(), "application/json; charset=utf-8"); return; }
+            if (route.StartsWith("download") || route == "model-delete")
+            {
+                if (method != "POST") { res.StatusCode = 405; res.Close(); return; }
+                var d = Store.Json.Deserialize<Dictionary<string, object>>(Body(ctx.Request));
+                d.TryGetValue("id", out var idObj);
+                var id = idObj as string;
+                string jobId = id;
+                if (route == "download")
+                {
+                    if (d.TryGetValue("url", out var u) && u is string url && url.Length > 0)
+                        jobId = Downloader.StartUrl(url, d.TryGetValue("kind", out var k) ? k as string : "chat");
+                    else jobId = Downloader.StartCatalog(id, d.TryGetValue("vision", out var v) && v is bool b && b);
+                }
+                else if (route == "download-cancel") Downloader.Cancel(id);
+                else if (route == "download-forget") Downloader.Forget(id);
+                else if (route == "model-delete") Downloader.DeleteCatalog(id);
+                else { res.StatusCode = 404; res.Close(); return; }
+                SendJson(res, new Dictionary<string, object> { ["ok"] = true, ["id"] = jobId });
+                return;
+            }
             if (route == "image-load" && method == "POST")
             {
                 var d = Store.Json.Deserialize<Dictionary<string, object>>(Body(ctx.Request));

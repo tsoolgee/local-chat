@@ -10,6 +10,10 @@ on:
         description: 'Run an end-to-end test with small models'
         type: boolean
         default: false
+      image_model:
+        description: 'Catalog id of the image model for the smoke test'
+        type: string
+        default: sd-turbo
 
 env:
   # Pinned engine versions: bump deliberately, then test.
@@ -64,29 +68,39 @@ jobs:
           $root = Join-Path $env:RUNNER_TEMP "בדיקה\LocalChat"
           New-Item -ItemType Directory -Force (Split-Path $root) | Out-Null
           Copy-Item -Recurse pkg/LocalChat (Split-Path $root)
-          curl.exe -sSL -o "$root/מודלים/SmolLM2-360M-Instruct-Q8_0.gguf" "https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q8_0.gguf"
-          curl.exe -sSL -o "$root/מודלים/תמונות/sd_turbo-f16-q8_0.gguf" "https://huggingface.co/Green-Sky/SD-Turbo-GGUF/resolve/main/sd_turbo-f16-q8_0.gguf"
           Start-Process "$root/LocalChat.exe" -ArgumentList "--no-window"
           Start-Sleep 5
           $base = "http://localhost:47800/api"
+          # models come in through the app's own downloader
+          $imgId = "${{ inputs.image_model }}"
+          irm "$base/download" -Method Post -ContentType 'application/json' -Body (@{ url = 'https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/blob/main/SmolLM2-360M-Instruct-Q8_0.gguf'; kind = 'chat' } | ConvertTo-Json)
+          irm "$base/download" -Method Post -ContentType 'application/json' -Body (@{ id = $imgId } | ConvertTo-Json)
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          do { Start-Sleep 5; $d = irm "$base/downloads"; ($d | % { "{0} {1} {2:N0}MB/{3:N0}MB" -f $_.name, $_.state, ($_.done/1MB), ($_.total/1MB) }) -join ' | ' } while (($d | ? { $_.state -in 'queued','downloading' }) -and $sw.Elapsed.TotalMinutes -lt 30)
+          if ($d | ? { $_.state -ne 'done' }) { $d | ConvertTo-Json; exit 1 }
+          "downloads finished in $([int]$sw.Elapsed.TotalSeconds)s"
+          $imgPath = ($d | ? { $_.id -eq $imgId }).path
+          irm "$base/load" -Method Post -ContentType 'application/json' -Body '{"file":"SmolLM2-360M-Instruct-Q8_0.gguf","ctx":4096}'
           irm "$base/models" | ConvertTo-Json -Compress
           irm "$base/image-models" | ConvertTo-Json -Compress
           for ($i = 0; $i -lt 60; $i++) { $s = irm "$base/state"; if ($s.state -eq 'ready') { break }; Start-Sleep 2 }
           "chat engine: $($s.state) $($s.error)"
           $chat = @{ messages = @(@{ role = 'user'; content = 'Say hi in five words.' }); max_tokens = 30 } | ConvertTo-Json -Depth 5
           (irm "http://127.0.0.1:$($s.port)/v1/chat/completions" -Method Post -Body $chat -ContentType 'application/json').choices[0].message.content
-          irm "$base/image-load" -Method Post -Body '{"file":"תמונות\\sd_turbo-f16-q8_0.gguf"}' -ContentType 'application/json; charset=utf-8'
-          for ($i = 0; $i -lt 90; $i++) { $s = irm "$base/state"; if ($s.image.state -ne 'loading') { break }; Start-Sleep 2 }
+          "image model: $imgPath"
+          irm "$base/image-load" -Method Post -Body (@{ file = $imgPath } | ConvertTo-Json) -ContentType 'application/json; charset=utf-8'
+          for ($i = 0; $i -lt 300; $i++) { $s = irm "$base/state"; if ($s.image.state -ne 'loading') { break }; Start-Sleep 2 }
           "image engine: $($s.image.state) $($s.image.error)"
           if ($s.image.state -ne 'ready') { irm "$base/image-log"; exit 1 }
           $req = @{ prompt = 'a red apple on a wooden table, photo'; width = 512; height = 512; seed = -1; batch_count = 1;
-                    sample_params = @{ sample_steps = 1; guidance = @{ txt_cfg = 1 } }; preview = 'proj'; output_format = 'png' } | ConvertTo-Json -Depth 5
+                    sample_params = @{ sample_steps = $(if ($imgId -like 'z-image*') { 4 } else { 1 }); guidance = @{ txt_cfg = 1 } }; preview = 'proj'; output_format = 'png' } | ConvertTo-Json -Depth 5
           $job = irm "$base/img/generate" -Method Post -Body $req -ContentType 'application/json'
           "job: $($job.id)"
           $sw = [Diagnostics.Stopwatch]::StartNew()
-          do { Start-Sleep 1; $j = irm "$base/img/job/$($job.id)"; "  $($j.status) $($j.preview.step)/$($j.preview.total_steps)" } while ($j.status -in 'queued','generating' -and $sw.Elapsed.TotalMinutes -lt 10)
+          do { Start-Sleep 1; $j = irm "$base/img/job/$($job.id)"; "  $($j.status) $($j.preview.step)/$($j.preview.total_steps)" } while ($j.status -in 'queued','generating' -and $sw.Elapsed.TotalMinutes -lt 40)
           $j | ConvertTo-Json -Depth 4 -Compress
           if ($j.status -ne 'completed') { irm "$base/image-log"; exit 1 }
+          irm "$base/image-log" | Select-String -Pattern 'version|--diffusion|--llm|--vae' | Select -First 12
           New-Item -ItemType Directory -Force smoke | Out-Null
           Invoke-WebRequest "http://localhost:47800$($j.images[0])" -OutFile smoke/result.png
           "generated in $([int]$sw.Elapsed.TotalSeconds)s"
