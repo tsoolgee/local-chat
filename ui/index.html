@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>צ'אט מקומי</title>
+<link rel="icon" href="/favicon.ico">
+<link rel="stylesheet" href="/vendor/github-dark.min.css" id="hljs-dark">
+<link rel="stylesheet" href="/vendor/github.min.css" id="hljs-light" disabled>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="side-top">
+      <button class="btn-new" id="newChat" title="שיחה חדשה (Ctrl+Shift+O)">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        <span>שיחה חדשה</span>
+      </button>
+      <button class="icon-btn" id="collapseSide" title="הסתר סרגל">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/></svg>
+      </button>
+    </div>
+    <div class="search">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="search" placeholder="חיפוש בשיחות" autocomplete="off">
+    </div>
+    <nav id="chatList"></nav>
+    <div class="side-bottom">
+      <button class="side-link" id="openSettings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        <span>הגדרות</span>
+      </button>
+      <div class="ram" id="ramInfo"></div>
+    </div>
+  </aside>
+
+  <main id="main">
+    <header id="topbar">
+      <button class="icon-btn" id="expandSide" title="הצג סרגל">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/></svg>
+      </button>
+      <div class="model-picker">
+        <button id="modelBtn" class="model-btn">
+          <span class="dot" id="stateDot"></span>
+          <span id="modelName">בחרו מודל</span>
+          <svg viewBox="0 0 24 24" class="chev"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div id="modelMenu" class="menu hidden"></div>
+      </div>
+      <div class="top-spacer"></div>
+      <button class="icon-btn" id="themeBtn" title="מצב בהיר/כהה">
+        <svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+    </header>
+
+    <div id="loadBar" class="hidden"><div id="loadFill"></div></div>
+
+    <section id="scroller">
+      <div id="messages"></div>
+      <div id="welcome" class="welcome hidden"></div>
+    </section>
+
+    <button id="toBottom" class="to-bottom hidden" title="לסוף השיחה">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+    </button>
+
+    <footer id="composerWrap">
+      <div id="composer">
+        <div id="attachments"></div>
+        <div class="composer-row">
+          <button class="icon-btn attach hidden" id="attachBtn" title="צירוף תמונה">
+            <svg viewBox="0 0 24 24"><path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>
+          </button>
+          <input type="file" id="fileInput" accept="image/*" multiple hidden>
+          <button class="icon-btn mode-btn" id="modeBtn" title="יצירת תמונה">
+            <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>
+          </button>
+          <textarea id="input" rows="1" placeholder="כתבו הודעה…" dir="auto"></textarea>
+          <button id="sendBtn" class="send" title="שליחה (Enter)" disabled>
+            <svg viewBox="0 0 24 24" class="i-send"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            <svg viewBox="0 0 24 24" class="i-stop"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          </button>
+        </div>
+        <div class="img-opts" id="imgOpts">
+          <span class="img-badge">יצירת תמונה</span>
+          <label>גודל
+            <select id="imgSize">
+              <option value="auto">אוטומטי</option>
+              <option value="512x512">ריבוע 512</option>
+              <option value="768x768">ריבוע 768</option>
+              <option value="1024x1024">ריבוע 1024</option>
+              <option value="512x768">לאורך 512×768</option>
+              <option value="768x512">לרוחב 768×512</option>
+              <option value="832x1216">לאורך 832×1216</option>
+              <option value="1216x832">לרוחב 1216×832</option>
+            </select>
+          </label>
+          <label>צעדים
+            <select id="imgSteps">
+              <option value="0">אוטומטי</option>
+              <option value="1">1 (הכי מהיר)</option>
+              <option value="4">4</option>
+              <option value="8">8</option>
+              <option value="15">15</option>
+              <option value="20">20</option>
+              <option value="30">30 (איכותי)</option>
+            </select>
+          </label>
+          <label>כמות
+            <select id="imgCount">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="4">4</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="hint">המודל רץ אצלכם במחשב, בלי אינטרנט. הוא יכול לטעות.</div>
+    </footer>
+  </main>
+</div>
+
+<div id="modal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2>הגדרות</h2>
+      <button class="icon-btn" data-close title="סגירה"><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <label class="field">
+        <span>הנחיית מערכת</span>
+        <textarea id="setSystem" rows="4" dir="auto" placeholder="לדוגמה: אתה עוזר אדיב שעונה בעברית בקצרה ולעניין."></textarea>
+      </label>
+      <div class="grid2">
+        <label class="field">
+          <span>יצירתיות (temperature) <b id="tempVal"></b></span>
+          <input type="range" id="setTemp" min="0" max="2" step="0.05">
+        </label>
+        <label class="field">
+          <span>מגוון (top_p) <b id="topPVal"></b></span>
+          <input type="range" id="setTopP" min="0.05" max="1" step="0.05">
+        </label>
+        <label class="field">
+          <span>אורך תשובה מרבי (טוקנים, 0 = ללא הגבלה)</span>
+          <input type="number" id="setMaxTok" min="0" step="256">
+        </label>
+        <label class="field">
+          <span>חזרתיות (repeat penalty)</span>
+          <input type="number" id="setRepeat" min="1" max="2" step="0.05">
+        </label>
+      </div>
+      <h3>מנוע</h3>
+      <div class="grid2">
+        <label class="field">
+          <span>גודל הקשר (זיכרון שיחה בטוקנים)</span>
+          <select id="setCtx">
+            <option value="2048">2,048</option>
+            <option value="4096">4,096</option>
+            <option value="8192">8,192 (מומלץ)</option>
+            <option value="16384">16,384</option>
+            <option value="32768">32,768</option>
+            <option value="65536">65,536</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>ליבות מעבד (0 = אוטומטי)</span>
+          <input type="number" id="setThreads" min="0" max="128" step="1">
+        </label>
+      </div>
+      <p class="note">שינוי בהגדרות המנוע ייכנס לתוקף בטעינה הבאה של המודל.</p>
+      <h3>תמונות</h3>
+      <label class="field">
+        <span>מה לא להציג בתמונה (negative prompt, באנגלית)</span>
+        <input type="text" id="setNeg" dir="ltr" placeholder="blurry, low quality, watermark, text">
+      </label>
+      <div class="grid2">
+        <label class="field">
+          <span>היצמדות לתיאור (CFG, 0 = אוטומטי)</span>
+          <input type="number" id="setCfg" min="0" max="20" step="0.5">
+        </label>
+        <label class="field">
+          <span>תרגום תיאור בעברית לאנגלית</span>
+          <select id="setTranslate">
+            <option value="1">כן, בעזרת מודל השיחה</option>
+            <option value="0">לא</option>
+          </select>
+        </label>
+      </div>
+      <h3>תצוגה</h3>
+      <div class="grid2">
+        <label class="field">
+          <span>גודל גופן</span>
+          <select id="setFont">
+            <option value="14">קטן</option>
+            <option value="15.5">רגיל</option>
+            <option value="17">גדול</option>
+            <option value="19">גדול מאוד</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>שליחה ב-Enter</span>
+          <select id="setEnter">
+            <option value="1">Enter שולח, Shift+Enter שורה חדשה</option>
+            <option value="0">Ctrl+Enter שולח</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" id="showLog">יומן מנוע</button>
+      <button class="btn ghost" id="showImgLog">יומן תמונות</button>
+      <button class="btn ghost" id="reloadModel">טען מחדש את המודל</button>
+      <div class="top-spacer"></div>
+      <button class="btn primary" id="saveSettings">שמירה</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<div id="lightbox" class="lightbox hidden"><img alt=""></div>
+
+<script src="/vendor/marked.min.js"></script>
+<script src="/vendor/purify.min.js"></script>
+<script src="/vendor/highlight.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

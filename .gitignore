@@ -1,0 +1,8 @@
+_dev/
+src/bin/
+src/obj/
+out/
+pkg/
+*.zip
+*.gguf
+*.safetensors

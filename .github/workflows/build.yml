@@ -1,0 +1,95 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      smoke_test:
+        description: 'Run an end-to-end test with small models'
+        type: boolean
+        default: false
+
+env:
+  # Pinned engine versions: bump deliberately, then test.
+  LLAMA_TAG: b11552
+  SD_TAG: master-956-1b0ba10
+  SD_ASSET: sd-master-1b0ba10-bin-win-cpu-x64.zip
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build launcher
+        run: dotnet build src/LocalChat.csproj -c Release -o out
+
+      - name: Fetch engines
+        shell: pwsh
+        run: |
+          gh release download $env:LLAMA_TAG -R ggml-org/llama.cpp -p "llama-$env:LLAMA_TAG-bin-win-cpu-x64.zip" -O llama.zip
+          gh release download $env:SD_TAG -R leejet/stable-diffusion.cpp -p $env:SD_ASSET -O sd.zip
+          Expand-Archive llama.zip -DestinationPath llama
+          Expand-Archive sd.zip -DestinationPath sd
+
+      - name: Assemble package
+        shell: pwsh
+        run: |
+          $root = "pkg/LocalChat"
+          New-Item -ItemType Directory -Force "$root/engine/sd", "$root/מודלים/תמונות" | Out-Null
+          Copy-Item out/LocalChat.exe $root
+          Copy-Item llama/llama-server.exe, llama/*.dll "$root/engine"
+          Copy-Item sd/sd-server.exe, sd/*.dll "$root/engine/sd"
+          Copy-Item llama/LICENSE* "$root/engine" -ErrorAction SilentlyContinue
+          Copy-Item sd/*.txt "$root/engine/sd" -ErrorAction SilentlyContinue
+          Copy-Item "dist/models-readme.txt" "$root/מודלים/קרא אותי.txt"
+          Compress-Archive -Path $root -DestinationPath LocalChat-win-x64.zip
+          Get-ChildItem -Recurse $root | Measure-Object Length -Sum | % { "Package size: {0:N1} MB" -f ($_.Sum / 1MB) }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LocalChat-win-x64
+          path: LocalChat-win-x64.zip
+          retention-days: 14
+
+      - name: Smoke test (small chat + image model)
+        if: ${{ inputs.smoke_test }}
+        shell: pwsh
+        run: |
+          $root = (Resolve-Path "pkg/LocalChat").Path
+          curl.exe -sSL -o "$root/מודלים/SmolLM2-360M-Instruct-Q8_0.gguf" "https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q8_0.gguf"
+          curl.exe -sSL -o "$root/מודלים/תמונות/tiny-sd-turbo_q8_0.gguf" "https://huggingface.co/akleine/tiny-sd-turbo_q8_0/resolve/main/tiny-sd-turbo_q8_0.gguf"
+          Start-Process "$root/LocalChat.exe" -ArgumentList "--no-window"
+          Start-Sleep 5
+          $base = "http://localhost:47800/api"
+          irm "$base/models" | ConvertTo-Json -Compress
+          irm "$base/image-models" | ConvertTo-Json -Compress
+          for ($i = 0; $i -lt 60; $i++) { $s = irm "$base/state"; if ($s.state -eq 'ready') { break }; Start-Sleep 2 }
+          "chat engine: $($s.state) $($s.error)"
+          $chat = @{ messages = @(@{ role = 'user'; content = 'Say hi in five words.' }); max_tokens = 30 } | ConvertTo-Json -Depth 5
+          (irm "http://127.0.0.1:$($s.port)/v1/chat/completions" -Method Post -Body $chat -ContentType 'application/json').choices[0].message.content
+          irm "$base/image-load" -Method Post -Body '{"file":"תמונות\\tiny-sd-turbo_q8_0.gguf"}' -ContentType 'application/json; charset=utf-8'
+          for ($i = 0; $i -lt 90; $i++) { $s = irm "$base/state"; if ($s.image.state -ne 'loading') { break }; Start-Sleep 2 }
+          "image engine: $($s.image.state) $($s.image.error)"
+          if ($s.image.state -ne 'ready') { irm "$base/image-log"; exit 1 }
+          $req = @{ prompt = 'a red apple on a wooden table, photo'; width = 512; height = 512; seed = -1; batch_count = 1;
+                    sample_params = @{ sample_steps = 1; guidance = @{ txt_cfg = 1 } }; preview = 'proj'; output_format = 'png' } | ConvertTo-Json -Depth 5
+          $job = irm "$base/img/generate" -Method Post -Body $req -ContentType 'application/json'
+          "job: $($job.id)"
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          do { Start-Sleep 1; $j = irm "$base/img/job/$($job.id)"; "  $($j.status) $($j.preview.step)/$($j.preview.total_steps)" } while ($j.status -in 'queued','generating' -and $sw.Elapsed.TotalMinutes -lt 10)
+          $j | ConvertTo-Json -Depth 4 -Compress
+          if ($j.status -ne 'completed') { irm "$base/image-log"; exit 1 }
+          New-Item -ItemType Directory -Force smoke | Out-Null
+          Invoke-WebRequest "http://localhost:47800$($j.images[0])" -OutFile smoke/result.png
+          "generated in $([int]$sw.Elapsed.TotalSeconds)s"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.smoke_test }}
+        with:
+          name: smoke-result
+          path: smoke/
