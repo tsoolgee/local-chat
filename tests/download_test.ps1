@@ -76,7 +76,7 @@ Check (-not (Test-Path "$dest.part.json")) 'state file removed when done'
 Set-Mode 'fast' 8
 $u2 = 'https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q8_0.gguf'
 $id2 = (Api 'download' @{ url = $u2 }).id
-do { Start-Sleep -Milliseconds 100; $j = Job $id2 } while ($j.done -lt 30MB -and $j.state -eq 'downloading')
+do { Start-Sleep -Milliseconds 50; $j = Job $id2 } while ($j.done -lt 2MB -and $j.state -eq 'downloading')
 Api 'download-cancel' @{ id = $id2 } | Out-Null; Wait-Stopped $id2 | Out-Null
 $d2 = Join-Path $Root 'מודלים\SmolLM2-360M-Instruct-Q8_0.gguf'
 Check (Test-Path "$d2.part") 'partial file exists before discard'

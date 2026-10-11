@@ -459,9 +459,28 @@ namespace LocalChat
             if (File.Exists(f.Dest + ".part.json")) File.Delete(f.Dest + ".part.json");
         }
 
+        /// Follows redirects (Hugging Face sends files from a CDN) and checks that the server can send parts of the file.
+        /// The library tests range support on the address it is given, so it must get the final one.
+        static string ResolveForRanges(string url)
+        {
+            var req = NewRequest(url);
+            req.AddRange(0, 0);
+            try
+            {
+                using (var res = (HttpWebResponse)req.GetResponse())
+                {
+                    if (res.StatusCode != HttpStatusCode.PartialContent) throw new NotSupportedException();
+                    return res.ResponseUri.AbsoluteUri;
+                }
+            }
+            catch (WebException we) when (we.Response is HttpWebResponse r && (int)r.StatusCode >= 400) { throw Friendly(we); }
+        }
+
         /// Many connections at once (Downloader library, MIT), resumable across restarts via the saved chunk positions.
         static void DownloadFast(Job job, FileItem f, PartState st)
         {
+            // signed CDN addresses expire, so this is done again on every start/resume; the state keeps the original
+            var directUrl = ResolveForRanges(f.Url);
             var part = f.Dest + ".part";
             var s = Settings();
             int conns = s.TryGetValue("downloadConnections", out var c) ? Convert.ToInt32(c) : 8;
@@ -498,13 +517,13 @@ namespace LocalChat
             {
                 var pkg = new global::Downloader.DownloadPackage
                 {
-                    Urls = new[] { f.Url }, FileName = part, TotalFileSize = f.Size, IsSupportDownloadInRange = true,
+                    Urls = new[] { directUrl }, FileName = part, TotalFileSize = f.Size, IsSupportDownloadInRange = true,
                     Chunks = st.Chunks.Select((x, i) => new global::Downloader.Chunk(x[0], x[1]) { Id = i.ToString(), Position = x[2] }).ToArray(),
                 };
                 job.Current = st.Chunks.Sum(x => x[2]);
                 task = svc.DownloadFileTaskAsync(pkg);
             }
-            else task = svc.DownloadFileTaskAsync(f.Url, part);
+            else task = svc.DownloadFileTaskAsync(directUrl, part);
 
             // save where every connection stands, so closing the app loses nothing
             var lastSave = DateTime.UtcNow;
