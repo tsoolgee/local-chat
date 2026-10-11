@@ -100,7 +100,16 @@ function buildCard(m, ram) {
     const pct = job.total ? Math.min(100, job.done / job.total * 100) : 0;
     const eta = job.speed > 0 ? fmtEta((job.total - job.done) / job.speed) : '';
     c.append(el('div', 'prog', `<div style="width:${pct.toFixed(1)}%"></div>`));
-    c.append(el('div', 'prog-text', `<span>${pct.toFixed(0)}% · ${fmtSize(job.done)} מתוך ${fmtSize(job.total)}</span><span>${job.speed > 0 ? fmtSize(job.speed) + ' לשנייה · עוד ' + eta : 'מתחבר…'}</span>`));
+    c.append(el('div', 'prog-text', `<span>${pct.toFixed(0)}% · ${fmtSize(job.done)} מתוך ${fmtSize(job.total)}</span><span>${job.speed > 0 ? fmtSize(job.speed) + ' לשנייה' + conns(job) + ' · עוד ' + eta : 'מתחבר…'}</span>`));
+  } else {
+    // stopped part-way (now or in an earlier run): show how far it got
+    const got = m.files.reduce((a, f) => a + (f.partial || 0), 0);
+    const want = m.files.filter(f => !f.optional || visionWanted[m.id]).reduce((a, f) => a + f.size, 0);
+    if (got > 0 && want) {
+      const pct = Math.min(100, got / want * 100);
+      c.append(el('div', 'prog paused', `<div style="width:${pct.toFixed(1)}%"></div>`));
+      c.append(el('div', 'prog-text', `<span>ההורדה נעצרה ב-${pct.toFixed(0)}% · ${fmtSize(got)} מתוך ${fmtSize(want)}</span>`));
+    }
   }
   if (job && job.state === 'error') c.append(el('div', 'err', esc(job.error)));
 
@@ -108,7 +117,7 @@ function buildCard(m, ram) {
   const btn = (text, cls, fn) => { const b = el('button', 'btn ' + cls, text); b.onclick = fn; acts.append(b); return b; };
   const needsOptional = visionWanted[m.id] && optional.some(f => !f.installed);
   if (active(job)) {
-    btn('ביטול', '', () => dlAction('download-cancel', m.id));
+    btn('עצירה', '', () => dlAction('download-cancel', m.id));
   } else if (m.installed && !needsOptional) {
     const eng = m.kind === 'image' ? imgEngine() : engine;
     const loaded = eng.model === m.path && eng.state !== 'idle';
@@ -117,7 +126,8 @@ function buildCard(m, ram) {
   } else {
     const partial = m.files.some(f => f.partial > 0);
     btn(m.installed ? 'הורדת ההרחבה' : partial ? 'המשך הורדה' : 'הורדה', 'primary', () => startDownload(m));
-    if (m.files.some(f => f.installed || f.partial)) btn('מחיקה', 'ghost', () => deleteModel(m));
+    if (partial) btn('מחיקת הקובץ הזמני', 'ghost', () => discardDownload(m.id, m.name));
+    else if (m.files.some(f => f.installed)) btn('מחיקה', 'ghost', () => deleteModel(m));
   }
   c.append(acts);
   return c;
@@ -153,19 +163,28 @@ function renderUrlTab(body) {
 function renderDlList() {
   const box = $('#dlList');
   if (!box) return;
-  const items = downloads.filter(d => d.id.startsWith('url-'));
+  const inCatalog = d => catalog && catalog.models.some(m => m.files.some(f => ('\\' + (d.path || '')).toLowerCase().endsWith(('\\' + m.folder + '\\' + f.name).toLowerCase())));
+  const items = downloads.filter(d => d.id.startsWith('url-') || (d.leftover && !inCatalog(d)));
   box.innerHTML = '';
   for (const d of items) {
     const it = el('div', 'dl-item');
     const pct = d.total ? Math.min(100, d.done / d.total * 100) : 0;
-    const stateText = { downloading: d.speed > 0 ? `${pct.toFixed(0)}% · ${fmtSize(d.speed)} לשנייה` : 'מתחבר…', queued: 'ממתין', done: 'הסתיים ✓', error: 'נכשל', cancelled: 'בוטל' }[d.state] || d.state;
+    const stopped = `נעצרה ב-${pct.toFixed(0)}% (${fmtSize(d.done)} מתוך ${fmtSize(d.total)})`;
+    const stateText = {
+      downloading: d.speed > 0 ? `${pct.toFixed(0)}% · ${fmtSize(d.speed)} לשנייה${conns(d)}` : 'מתחבר…', queued: 'ממתין', done: 'הסתיים ✓',
+      error: 'נכשלה · ' + stopped, cancelled: stopped, paused: stopped + ' · מהפעלה קודמת',
+    }[d.state] || d.state;
     it.innerHTML = `<div class="top"><b>${esc(d.name)}</b><span class="disk">${stateText}</span></div>`;
-    if (active(d)) it.append(el('div', 'prog', `<div style="width:${pct.toFixed(1)}%"></div>`));
+    if (d.state !== 'done' && d.total) it.append(el('div', 'prog' + (active(d) ? '' : ' paused'), `<div style="width:${pct.toFixed(1)}%"></div>`));
     if (d.error) it.append(el('div', 'err-box', esc(d.error)));
     const row = el('div', 'actions');
     const b = (t, fn) => { const x = el('button', 'btn', t); x.onclick = fn; row.append(x); };
-    if (active(d)) b('ביטול', () => dlAction('download-cancel', d.id));
-    else b('הסרה מהרשימה', () => dlAction('download-forget', d.id));
+    if (active(d)) b('עצירה', () => dlAction('download-cancel', d.id));
+    else if (d.state === 'done') b('הסרה מהרשימה', () => dlAction('download-forget', d.id));
+    else {
+      b('המשך הורדה', () => dlAction('download-resume', d.id));
+      b('מחיקת הקובץ הזמני', () => discardDownload(d.id, d.name));
+    }
     it.append(row);
     box.append(it);
   }
@@ -177,6 +196,14 @@ async function startDownload(m) {
     toast('ההורדה התחילה. אפשר להמשיך להשתמש בתוכנה בינתיים.');
     await refreshStore();
   } catch (e) { toast(e.message, 5000); }
+}
+
+const conns = d => d.connections > 1 ? ` · ${d.connections} חיבורים` : '';
+
+async function discardDownload(id, name) {
+  if (!confirm(`למחוק את מה שכבר ירד מ-${name}? ההורדה תתחיל מההתחלה בפעם הבאה.`)) return;
+  try { await api('download-discard', { method: 'POST', body: { id } }); toast('הקובץ הזמני נמחק'); } catch (e) { toast(e.message, 5000); }
+  refreshStore();
 }
 
 async function dlAction(route, id) {

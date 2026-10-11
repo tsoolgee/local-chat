@@ -138,6 +138,10 @@ function openSettings() {
   $('#setTranslate').value = String(S.translate);
   $('#setAutoImg').value = String(S.autoImages);
   $('#setProxy').value = S.proxy || '';
+  $('#setDlMode').value = S.downloadMode || 'fast';
+  $('#setDlConns').value = String(S.downloadConnections || 8);
+  $('#setDlConns').disabled = $('#setDlMode').value === 'simple';
+  $('#setDlMode').onchange = () => { $('#setDlConns').disabled = $('#setDlMode').value === 'simple'; };
   showModal('settings');
 }
 
@@ -181,6 +185,8 @@ async function submitSettings() {
     translate: +$('#setTranslate').value,
     autoImages: +$('#setAutoImg').value,
     proxy: $('#setProxy').value.trim(),
+    downloadMode: $('#setDlMode').value,
+    downloadConnections: +$('#setDlConns').value,
   };
   const engineChanged = patch.ctx !== S.ctx || patch.threads !== S.threads;
   await saveSettings(patch);

@@ -15,6 +15,7 @@ function Api($route, $body) {
 }
 function Set-Mode($mode, $conns) { irm "$script:base/settings" -Method Put -ContentType 'application/json' -Body (@{ downloadMode = $mode; downloadConnections = $conns; proxy = '' } | ConvertTo-Json) | Out-Null }
 function Job($id) { @(Api 'downloads') | ? { $_.id -eq $id } | select -First 1 }
+function Wait-Stopped($id) { $t = [Diagnostics.Stopwatch]::StartNew(); do { Start-Sleep -Milliseconds 300; $j = Job $id } while ($j -and $j.state -in 'downloading','queued' -and $t.Elapsed.TotalSeconds -lt 90); "  stopped after $([math]::Round($t.Elapsed.TotalSeconds,1))s: $($j.state)" | Write-Host; $j }
 function Check($ok, $what) { if ($ok) { "  PASS $what" } else { "  FAIL $what"; $script:fail++ } }
 
 # measures bytes/second over a fixed window, after the first bytes arrive
@@ -27,7 +28,7 @@ function Measure-Speed($mode, $conns, $seconds) {
   Start-Sleep $seconds
   $j = Job $id
   $mbps = ($j.done - $d0) / $t.Elapsed.TotalSeconds / 1MB
-  Api 'download-cancel' @{ id = $id } | Out-Null; Start-Sleep 2
+  Api 'download-cancel' @{ id = $id } | Out-Null; Wait-Stopped $id | Out-Null
   Api 'download-discard' @{ id = $id } | Out-Null
   Write-Host ("{0,-6} x{1,-2}: {2,7:N1} MB/s  (connections reported: {3})" -f $mode, $conns, $mbps, $j.connections)
   return $mbps
@@ -44,7 +45,7 @@ Check (-not (Test-Path "$dest.part") -and -not (Test-Path "$dest.part.json")) 'd
 Set-Mode 'fast' 8
 $id = (Api 'download' @{ url = $url; kind = 'chat' }).id
 do { Start-Sleep -Milliseconds 200; $j = Job $id } while ($j.done -lt 0.15 * [math]::Max(1, $j.total) -and $j.state -eq 'downloading')
-Api 'download-cancel' @{ id = $id } | Out-Null; Start-Sleep 2
+Api 'download-cancel' @{ id = $id } | Out-Null; Wait-Stopped $id | Out-Null
 $j = Job $id; "  after cancel: state=$($j.state) done=$([int]($j.done/1MB))MB"
 Check ($j.state -eq 'cancelled') 'cancel stops the download'
 Check (Test-Path "$dest.part.json") 'state file kept after cancel'
@@ -72,7 +73,7 @@ Set-Mode 'fast' 8
 $u2 = 'https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q8_0.gguf'
 $id2 = (Api 'download' @{ url = $u2 }).id
 do { Start-Sleep -Milliseconds 100; $j = Job $id2 } while ($j.done -lt 30MB -and $j.state -eq 'downloading')
-Api 'download-cancel' @{ id = $id2 } | Out-Null; Start-Sleep 2
+Api 'download-cancel' @{ id = $id2 } | Out-Null; Wait-Stopped $id2 | Out-Null
 $d2 = Join-Path $Root 'מודלים\SmolLM2-360M-Instruct-Q8_0.gguf'
 Check (Test-Path "$d2.part") 'partial file exists before discard'
 Api 'download-discard' @{ id = $id2 } | Out-Null

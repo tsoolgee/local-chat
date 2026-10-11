@@ -16,6 +16,7 @@
     <DebugType>none</DebugType>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <FodyGenerateXsd>false</FodyGenerateXsd>
   </PropertyGroup>
 
   <ItemGroup>

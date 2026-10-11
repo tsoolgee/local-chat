@@ -184,6 +184,24 @@
       </div>
       <p class="note">שינוי בהגדרות המנוע ייכנס לתוקף בטעינה הבאה של המודל.</p>
       <h3>הורדות</h3>
+      <div class="row2">
+        <label class="field">
+          <span>שיטת הורדה</span>
+          <select id="setDlMode">
+            <option value="fast">מואצת: כמה חיבורים במקביל (מומלץ)</option>
+            <option value="simple">רגילה: חיבור אחד</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>מספר חיבורים בהורדה מואצת</span>
+          <select id="setDlConns">
+            <option value="4">4</option>
+            <option value="8">8 (מומלץ)</option>
+            <option value="16">16</option>
+            <option value="32">32</option>
+          </select>
+        </label>
+      </div>
       <label class="field">
         <span>פרוקסי להורדת מודלים (ריק = ישיר). שימושי כשסינון האינטרנט חוסם את Hugging Face</span>
         <input type="text" id="setProxy" dir="ltr" placeholder="http://127.0.0.1:10809">

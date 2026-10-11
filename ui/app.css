@@ -417,3 +417,7 @@ pre.log { direction: ltr; text-align: left; font-size: 12px; max-height: 60vh; o
 .mem-note { color: #d97706; display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: center; }
 .link-btn { border: 0; background: none; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; padding: 0; text-decoration: underline; }
 .update-note { color: var(--accent) !important; font-weight: 600; text-decoration: none; }
+
+.prog.paused > div { background: var(--text-faint); }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 560px) { .row2 { grid-template-columns: 1fr; } }

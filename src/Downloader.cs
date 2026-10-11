@@ -198,7 +198,18 @@ namespace LocalChat
             Job j;
             lock (Lock) Jobs.TryGetValue(id ?? "", out j);
             if (j != null && (j.State == "downloading" || j.State == "queued")) throw new Exception("קודם עוצרים את ההורדה");
-            var dests = j != null ? j.Files.Select(f => f.Dest).ToList() : new List<string> { PartDest(id) };
+            List<string> dests;
+            if (j != null) dests = j.Files.Select(f => f.Dest).ToList();
+            else if (id != null && id.StartsWith("part:")) dests = new List<string> { PartDest(id) };
+            else
+            {
+                // a catalog model whose download was stopped in an earlier run
+                var cat = Store.Json.Deserialize<Dictionary<string, object>>(CatalogJson());
+                var m = ((ArrayList)cat["models"]).Cast<Dictionary<string, object>>().FirstOrDefault(x => (x["id"] as string) == id)
+                        ?? throw new Exception("ההורדה לא נמצאה");
+                var dir = Path.Combine(KindRoot(m["kind"] as string), SafeName(m["folder"] as string));
+                dests = ((ArrayList)m["files"]).Cast<Dictionary<string, object>>().Select(f => Path.Combine(dir, SafeName(f["name"] as string))).ToList();
+            }
             foreach (var d in dests)
                 foreach (var x in new[] { d + ".part", d + ".part.json" }) if (File.Exists(x)) File.Delete(x);
             lock (Lock) Jobs.Remove(id ?? "");
