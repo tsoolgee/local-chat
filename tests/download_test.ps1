@@ -14,7 +14,7 @@ function Api($route, $body) {
   else { irm "$script:base/$route" }
 }
 function Set-Mode($mode, $conns) { irm "$script:base/settings" -Method Put -ContentType 'application/json' -Body (@{ downloadMode = $mode; downloadConnections = $conns; proxy = '' } | ConvertTo-Json) | Out-Null }
-function Job($id) { @(Api 'downloads') | ? { $_.id -eq $id } | select -First 1 }
+function Job($id) { (Api 'downloads') | % { $_ } | ? { $_.id -eq $id } | select -First 1 }
 function Wait-Stopped($id) { $t = [Diagnostics.Stopwatch]::StartNew(); do { Start-Sleep -Milliseconds 300; $j = Job $id } while ($j -and $j.state -in 'downloading','queued' -and $t.Elapsed.TotalSeconds -lt 90); "  stopped after $([math]::Round($t.Elapsed.TotalSeconds,1))s: $($j.state)" | Write-Host; $j }
 function Check($ok, $what) { if ($ok) { "  PASS $what" } else { "  FAIL $what"; $script:fail++ } }
 
@@ -59,7 +59,7 @@ do { Start-Sleep -Milliseconds 200; $j = Job $id } while ($j.done -lt 0.4 * [dou
 "  before kill: done=$([int]($j.done/1MB))MB"
 Stop-Process -Id $p.Id -Force; Start-Sleep 2
 $p = Start-App
-$left = @(Api 'downloads') | ? { $_.leftover }
+$left = @((Api 'downloads') | % { $_ } | ? { $_.leftover })
 "  after restart: " + (($left | % { "$($_.id) $($_.state) $([int]($_.done/1MB))MB/$([int]($_.total/1MB))MB" }) -join '; ')
 Check ($left.Count -eq 1 -and $left[0].done -gt 0.2 * $left[0].total) 'unfinished download is listed after restart with its progress'
 $rid = $left[0].id
