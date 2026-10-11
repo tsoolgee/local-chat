@@ -33,7 +33,7 @@ namespace LocalChat
         static Downloader()
         {
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12 | (SecurityProtocolType)12288; // + TLS 1.3
-            ServicePointManager.DefaultConnectionLimit = 8;
+            ServicePointManager.DefaultConnectionLimit = 64;   // several connections to the same server
         }
 
         /* ---------------- catalog ---------------- */
@@ -475,11 +475,11 @@ namespace LocalChat
                 ParallelCount = conns,
                 MaxTryAgainOnFailover = 200,
                 Timeout = 30000,
-                BufferBlockSize = 64 * 1024,
+                BufferBlockSize = 1024 * 1024,
                 MinimumSizeOfChunking = 4 * 1024 * 1024,
                 ReserveStorageSpaceBeforeStartingDownload = false,
                 ClearPackageOnCompletionWithFailure = false,
-                MaximumMemoryBufferBytes = 64L * 1024 * 1024,
+                MaximumMemoryBufferBytes = 256L * 1024 * 1024,
                 RequestConfiguration = new global::Downloader.RequestConfiguration
                 {
                     UserAgent = "LocalChat/1.0", AllowAutoRedirect = true, KeepAlive = true, Timeout = 30000,
@@ -522,7 +522,7 @@ namespace LocalChat
             {
                 if (job.Cancel) { svc.CancelAsync(); break; }
                 Thread.Sleep(250);
-                if ((DateTime.UtcNow - lastSave).TotalSeconds >= 3) { Save(); lastSave = DateTime.UtcNow; }
+                if ((DateTime.UtcNow - lastSave).TotalSeconds >= 5) { Save(); lastSave = DateTime.UtcNow; }
             }
             try { task.Wait(60000); } catch { }
             var pk = svc.Package;

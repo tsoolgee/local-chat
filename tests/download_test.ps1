@@ -44,14 +44,14 @@ Check (-not (Test-Path "$dest.part") -and -not (Test-Path "$dest.part.json")) 'd
 "== stop, hard kill, resume"
 Set-Mode 'fast' 8
 $id = (Api 'download' @{ url = $url; kind = 'chat' }).id
-do { Start-Sleep -Milliseconds 200; $j = Job $id } while ($j.done -lt 0.15 * [math]::Max(1, $j.total) -and $j.state -eq 'downloading')
+do { Start-Sleep -Milliseconds 200; $j = Job $id } while ($j.done -lt 0.15 * [math]::Max(1.0, [double]$j.total) -and $j.state -eq 'downloading')
 Api 'download-cancel' @{ id = $id } | Out-Null; Wait-Stopped $id | Out-Null
 $j = Job $id; "  after cancel: state=$($j.state) done=$([int]($j.done/1MB))MB"
 Check ($j.state -eq 'cancelled') 'cancel stops the download'
 Check (Test-Path "$dest.part.json") 'state file kept after cancel'
 # continue, then kill the app hard in the middle
 Api 'download-resume' @{ id = $id } | Out-Null
-do { Start-Sleep -Milliseconds 200; $j = Job $id } while ($j.done -lt 0.4 * $j.total -and $j.state -eq 'downloading')
+do { Start-Sleep -Milliseconds 200; $j = Job $id } while ($j.done -lt 0.4 * [double]$j.total -and $j.state -eq 'downloading')
 "  before kill: done=$([int]($j.done/1MB))MB"
 Stop-Process -Id $p.Id -Force; Start-Sleep 2
 $p = Start-App
