@@ -6,3 +6,4 @@ pkg/
 *.zip
 *.gguf
 *.safetensors
+_build_check/

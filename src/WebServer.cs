@@ -96,6 +96,8 @@ namespace LocalChat
                 }
                 else if (route == "download-cancel") Downloader.Cancel(id);
                 else if (route == "download-forget") Downloader.Forget(id);
+                else if (route == "download-resume") jobId = Downloader.Resume(id);
+                else if (route == "download-discard") Downloader.Discard(id);
                 else if (route == "model-delete") Downloader.DeleteCatalog(id);
                 else { res.StatusCode = 404; res.Close(); return; }
                 SendJson(res, new Dictionary<string, object> { ["ok"] = true, ["id"] = jobId });

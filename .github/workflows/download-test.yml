@@ -1,0 +1,35 @@
+name: download-test
+
+# The model downloader: speed of simple vs accelerated, and stop / kill / resume / discard.
+on:
+  workflow_dispatch:
+
+env:
+  LLAMA_TAG: b11552
+
+jobs:
+  test:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: dotnet build src/LocalChat.csproj -c Release -o out
+      - name: Assemble (exe only, like the release)
+        shell: pwsh
+        run: |
+          gh release download $env:LLAMA_TAG -R ggml-org/llama.cpp -p "llama-$env:LLAMA_TAG-bin-win-cpu-x64.zip" -O llama.zip
+          Expand-Archive llama.zip -DestinationPath llama
+          $root = Join-Path $env:RUNNER_TEMP "בדיקה\LocalChat"
+          New-Item -ItemType Directory -Force "$root\engine" | Out-Null
+          Copy-Item out/LocalChat.exe $root
+          Copy-Item llama/llama-server.exe, llama/*.dll "$root\engine"
+          "ROOT=$root" >> $env:GITHUB_ENV
+      - name: Test
+        shell: pwsh
+        run: ./tests/download_test.ps1 $env:ROOT
+      - name: Log
+        if: always()
+        shell: pwsh
+        run: Get-Content (Join-Path $env:ROOT 'נתונים\log.txt') -ErrorAction SilentlyContinue | Select -Last 40

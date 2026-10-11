@@ -20,6 +20,7 @@ namespace LocalChat
             public string Id, Name, Kind, State = "queued", Error, Folder;
             public List<FileItem> Files = new List<FileItem>();
             public long Total, Done, Current;
+            public int Connections;
             public double Speed;
             public volatile bool Cancel;
         }
@@ -91,7 +92,7 @@ namespace LocalChat
                     var p = Path.Combine(dir, SafeName(f["name"] as string));
                     var have = File.Exists(p) && new FileInfo(p).Length == Convert.ToInt64(f["size"]);
                     f["installed"] = have;
-                    f["partial"] = !have && File.Exists(p + ".part") ? new FileInfo(p + ".part").Length : 0L;
+                    f["partial"] = have ? 0L : PartialBytes(p);
                     if (have) any = true;
                     else if (!f.ContainsKey("optional")) all = false;
                 }
@@ -174,6 +175,43 @@ namespace LocalChat
             lock (Lock) if (Jobs.TryGetValue(id, out var j)) j.Cancel = true;
         }
 
+        /// Continues a stopped download: a job from this session, or an unfinished file found on disk ("part:<path>").
+        public static string Resume(string id)
+        {
+            Job old;
+            lock (Lock) Jobs.TryGetValue(id ?? "", out old);
+            if (old != null)
+            {
+                if (old.State == "downloading" || old.State == "queued") return id;
+                return Start(new Job { Id = old.Id, Name = old.Name, Kind = old.Kind, Folder = old.Folder, Files = old.Files });
+            }
+            var dest = PartDest(id);
+            var st = ReadState(dest) ?? throw new Exception("לא נמצאו פרטי ההורדה, אז אי אפשר להמשיך אותה. אפשר למחוק את הקובץ הזמני.");
+            var job = new Job { Id = id, Name = st.Name ?? Path.GetFileName(dest), Kind = st.Kind ?? "chat", Folder = Path.GetDirectoryName(dest) };
+            job.Files.Add(new FileItem { Url = st.Url, Dest = dest, Size = st.Size });
+            return Start(job);
+        }
+
+        /// Deletes the temporary files of a stopped download.
+        public static void Discard(string id)
+        {
+            Job j;
+            lock (Lock) Jobs.TryGetValue(id ?? "", out j);
+            if (j != null && (j.State == "downloading" || j.State == "queued")) throw new Exception("קודם עוצרים את ההורדה");
+            var dests = j != null ? j.Files.Select(f => f.Dest).ToList() : new List<string> { PartDest(id) };
+            foreach (var d in dests)
+                foreach (var x in new[] { d + ".part", d + ".part.json" }) if (File.Exists(x)) File.Delete(x);
+            lock (Lock) Jobs.Remove(id ?? "");
+        }
+
+        static string PartDest(string id)
+        {
+            if (id == null || !id.StartsWith("part:")) throw new Exception("ההורדה לא נמצאה");
+            var dest = Path.GetFullPath(Path.Combine(Program.ModelsDir, id.Substring(5)));
+            if (!dest.StartsWith(Path.GetFullPath(Program.ModelsDir) + "\\", StringComparison.OrdinalIgnoreCase)) throw new Exception("נתיב לא תקין");
+            return dest;
+        }
+
         public static void Forget(string id)
         {
             lock (Lock) if (Jobs.TryGetValue(id, out var j) && j.State != "downloading" && j.State != "queued") Jobs.Remove(id);
@@ -194,7 +232,7 @@ namespace LocalChat
             foreach (Dictionary<string, object> f in (ArrayList)m["files"])
             {
                 var p = Path.Combine(dir, SafeName(f["name"] as string));
-                foreach (var x in new[] { p, p + ".part" }) if (File.Exists(x)) File.Delete(x);
+                foreach (var x in new[] { p, p + ".part", p + ".part.json" }) if (File.Exists(x)) File.Delete(x);
             }
             try { if (Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any()) Directory.Delete(dir); } catch { }
         }
@@ -234,15 +272,37 @@ namespace LocalChat
 
         public static string Status()
         {
+            List<Dictionary<string, object>> list;
+            HashSet<string> busy;
             lock (Lock)
             {
-                return Store.Json.Serialize(Jobs.Values.Select(j => new Dictionary<string, object>
+                list = Jobs.Values.Select(j => new Dictionary<string, object>
                 {
                     ["id"] = j.Id, ["name"] = j.Name, ["kind"] = j.Kind, ["state"] = j.State, ["error"] = j.Error,
-                    ["total"] = j.Total, ["done"] = j.Done + j.Current, ["speed"] = j.Speed,
+                    ["total"] = j.Total, ["done"] = j.Done + j.Current, ["speed"] = j.Speed, ["connections"] = j.Connections,
                     ["path"] = j.Files.Count > 0 ? j.Files[0].Dest.Substring(Program.ModelsDir.Length).TrimStart('\\') : null,
-                }).ToList());
+                }).ToList();
+                busy = new HashSet<string>(Jobs.Values.SelectMany(j => j.Files.Select(f => f.Dest)), StringComparer.OrdinalIgnoreCase);
             }
+            // unfinished downloads left from an earlier run (the app was closed in the middle)
+            try
+            {
+                foreach (var side in Directory.EnumerateFiles(Program.ModelsDir, "*.part.json", SearchOption.AllDirectories))
+                {
+                    var dest = side.Substring(0, side.Length - ".part.json".Length);
+                    if (busy.Contains(dest)) continue;
+                    var st = ReadState(dest);
+                    if (st == null) continue;
+                    var rel = dest.Substring(Program.ModelsDir.Length).TrimStart('\\');
+                    list.Add(new Dictionary<string, object>
+                    {
+                        ["id"] = "part:" + rel, ["name"] = st.Name ?? Path.GetFileName(dest), ["kind"] = st.Kind, ["state"] = "paused",
+                        ["total"] = st.Size, ["done"] = PartialBytes(dest), ["speed"] = 0, ["path"] = rel, ["leftover"] = true,
+                    });
+                }
+            }
+            catch { }
+            return Store.Json.Serialize(list);
         }
 
         /* ---------------- the actual download ---------------- */
@@ -257,7 +317,7 @@ namespace LocalChat
                 job.Total = job.Files.Sum(f => Math.Max(0, f.Size));
 
                 long need = job.Files.Sum(f => File.Exists(f.Dest) && new FileInfo(f.Dest).Length == f.Size ? 0
-                    : Math.Max(0, f.Size - (File.Exists(f.Dest + ".part") ? new FileInfo(f.Dest + ".part").Length : 0)));
+                    : Math.Max(0, f.Size - PartialBytes(f.Dest)));
                 var free = FreeBytes(job.Folder);
                 if (free >= 0 && need + 200_000_000 > free)
                     throw new Exception($"אין מספיק מקום בדיסק: צריך {need / 1e9:0.0}GB ויש {free / 1e9:0.0}GB פנויים.");
@@ -289,12 +349,8 @@ namespace LocalChat
             req.AllowAutoRedirect = true;
             req.Timeout = 30000;
             req.ReadWriteTimeout = 60000;
-            var proxy = Program.Store.ReadSettingsDict().TryGetValue("proxy", out var p) ? (p as string ?? "").Trim() : "";
-            if (proxy.Length > 0)
-            {
-                if (!proxy.Contains("://")) proxy = "http://" + proxy;
-                req.Proxy = new WebProxy(proxy);
-            }
+            var proxy = ProxyFromSettings();
+            if (proxy != null) req.Proxy = proxy;
             return req;
         }
 
@@ -306,9 +362,183 @@ namespace LocalChat
             catch (WebException we) { throw Friendly(we); }
         }
 
+        /* ---- saved state next to the temporary file: <file>.part.json ---- */
+
+        class PartState
+        {
+            public string Url, Name, Kind, Mode;
+            public long Size;
+            public List<long[]> Chunks;   // [start, end, position] per connection (fast mode)
+        }
+
+        static PartState ReadState(string dest)
+        {
+            try
+            {
+                var p = dest + ".part.json";
+                if (!File.Exists(p)) return null;
+                var d = Store.Json.Deserialize<Dictionary<string, object>>(File.ReadAllText(p, Encoding.UTF8));
+                var st = new PartState
+                {
+                    Url = d["url"] as string, Name = d.TryGetValue("name", out var n) ? n as string : null,
+                    Kind = d.TryGetValue("kind", out var k) ? k as string : "chat", Mode = d.TryGetValue("mode", out var mo) ? mo as string : "simple",
+                    Size = Convert.ToInt64(d["size"]),
+                };
+                if (d.TryGetValue("chunks", out var c) && c is ArrayList al)
+                    st.Chunks = al.Cast<ArrayList>().Select(x => x.Cast<object>().Select(Convert.ToInt64).ToArray()).ToList();
+                return string.IsNullOrEmpty(st.Url) ? null : st;
+            }
+            catch { return null; }
+        }
+
+        static void WriteState(string dest, PartState st)
+        {
+            var d = new Dictionary<string, object> { ["url"] = st.Url, ["name"] = st.Name, ["kind"] = st.Kind, ["mode"] = st.Mode, ["size"] = st.Size };
+            if (st.Chunks != null) d["chunks"] = st.Chunks;
+            var tmp = dest + ".part.json.tmp";
+            File.WriteAllText(tmp, Store.Json.Serialize(d), Encoding.UTF8);
+            if (File.Exists(dest + ".part.json")) File.Delete(dest + ".part.json");
+            File.Move(tmp, dest + ".part.json");
+        }
+
+        /// How much of a file is already downloaded (fast mode writes out of order, so its file length says little).
+        static long PartialBytes(string dest)
+        {
+            var st = ReadState(dest);
+            if (st != null && st.Mode == "fast" && st.Chunks != null) return st.Chunks.Sum(c => c[2]);
+            return File.Exists(dest + ".part") ? new FileInfo(dest + ".part").Length : 0;
+        }
+
+        static Dictionary<string, object> Settings() { try { return Program.Store.ReadSettingsDict(); } catch { return new Dictionary<string, object>(); } }
+
+        static IWebProxy ProxyFromSettings()
+        {
+            var proxy = Settings().TryGetValue("proxy", out var p) ? (p as string ?? "").Trim() : "";
+            if (proxy.Length == 0) return null;
+            if (!proxy.Contains("://")) proxy = "http://" + proxy;
+            return new WebProxy(proxy);
+        }
+
         static void DownloadFile(Job job, FileItem f)
         {
+            var st = ReadState(f.Dest);
             var part = f.Dest + ".part";
+            // a download keeps the method it started with; a new one follows the setting
+            string mode;
+            if (st != null && st.Size == f.Size && st.Mode == "fast" && st.Chunks != null && File.Exists(part)) mode = "fast";
+            else if (File.Exists(part) && (st == null || st.Mode != "fast")) mode = "simple";
+            else
+            {
+                if (File.Exists(part)) File.Delete(part);   // state doesn't match the file: start clean
+                st = null;
+                var s = Settings();
+                mode = s.TryGetValue("downloadMode", out var m) && (m as string) == "simple" ? "simple" : "fast";
+            }
+            if (mode == "fast" && f.Size > 8_000_000)
+            {
+                try { DownloadFast(job, f, st); }
+                catch (NotSupportedException)
+                {
+                    // the server can't send parts of a file: fall back to one connection
+                    foreach (var x in new[] { part, f.Dest + ".part.json" }) if (File.Exists(x)) File.Delete(x);
+                    DownloadSimple(job, f);
+                }
+            }
+            else DownloadSimple(job, f);
+            if (File.Exists(f.Dest + ".part.json")) File.Delete(f.Dest + ".part.json");
+        }
+
+        /// Many connections at once (Downloader library, MIT), resumable across restarts via the saved chunk positions.
+        static void DownloadFast(Job job, FileItem f, PartState st)
+        {
+            var part = f.Dest + ".part";
+            var s = Settings();
+            int conns = s.TryGetValue("downloadConnections", out var c) ? Convert.ToInt32(c) : 8;
+            conns = Math.Max(2, Math.Min(32, conns <= 0 ? 8 : conns));
+            job.Connections = conns;
+
+            var cfg = new global::Downloader.DownloadConfiguration
+            {
+                ChunkCount = st?.Chunks?.Count ?? conns,
+                ParallelDownload = true,
+                ParallelCount = conns,
+                MaxTryAgainOnFailover = 200,
+                Timeout = 30000,
+                BufferBlockSize = 64 * 1024,
+                MinimumSizeOfChunking = 4 * 1024 * 1024,
+                ReserveStorageSpaceBeforeStartingDownload = false,
+                ClearPackageOnCompletionWithFailure = false,
+                MaximumMemoryBufferBytes = 64L * 1024 * 1024,
+                RequestConfiguration = new global::Downloader.RequestConfiguration
+                {
+                    UserAgent = "LocalChat/1.0", AllowAutoRedirect = true, KeepAlive = true, Timeout = 30000,
+                    Proxy = ProxyFromSettings(),
+                },
+            };
+            var svc = new global::Downloader.DownloadService(cfg);
+            Exception error = null;
+            bool cancelled = false, finished = false;
+            svc.DownloadProgressChanged += (o, e) => { job.Current = e.ReceivedBytesSize; job.Speed = e.BytesPerSecondSpeed; };
+            svc.DownloadFileCompleted += (o, e) => { error = e.Error; cancelled = e.Cancelled; finished = true; };
+
+            st = st ?? new PartState { Url = f.Url, Name = job.Name, Kind = job.Kind, Mode = "fast", Size = f.Size };
+            System.Threading.Tasks.Task task;
+            if (st.Chunks != null)
+            {
+                var pkg = new global::Downloader.DownloadPackage
+                {
+                    Urls = new[] { f.Url }, FileName = part, TotalFileSize = f.Size, IsSupportDownloadInRange = true,
+                    Chunks = st.Chunks.Select((x, i) => new global::Downloader.Chunk(x[0], x[1]) { Id = i.ToString(), Position = x[2] }).ToArray(),
+                };
+                job.Current = st.Chunks.Sum(x => x[2]);
+                task = svc.DownloadFileTaskAsync(pkg);
+            }
+            else task = svc.DownloadFileTaskAsync(f.Url, part);
+
+            // save where every connection stands, so closing the app loses nothing
+            var lastSave = DateTime.UtcNow;
+            void Save()
+            {
+                var pkg = svc.Package;
+                if (pkg?.Chunks == null || pkg.Chunks.Length == 0) return;
+                if (!pkg.IsSupportDownloadInRange) return;
+                var snap = pkg.Chunks.Select(x => new[] { x.Start, x.End, x.Position }).ToList();
+                try { pkg.Flush(); } catch { }        // bytes on disk before positions are recorded
+                st.Chunks = snap;
+                try { WriteState(f.Dest, st); } catch { }
+            }
+            while (!task.IsCompleted && !finished)
+            {
+                if (job.Cancel) { svc.CancelAsync(); break; }
+                Thread.Sleep(250);
+                if ((DateTime.UtcNow - lastSave).TotalSeconds >= 3) { Save(); lastSave = DateTime.UtcNow; }
+            }
+            try { task.Wait(60000); } catch { }
+            var pk = svc.Package;
+            if (pk != null && pk.TotalFileSize > 0 && !pk.IsSupportDownloadInRange && !finished) throw new NotSupportedException();
+            Save();
+            try { pk?.Storage?.Dispose(); } catch { }
+            try { svc.Dispose(); } catch { }
+
+            if (job.Cancel || cancelled) throw new OperationCanceledException();
+            if (error != null)
+            {
+                var we = error as WebException ?? error.InnerException as WebException;
+                if (we != null) throw Friendly(we);
+                throw new Exception("ההורדה נכשלה: " + error.Message + ". אפשר ללחוץ \"המשך הורדה\".");
+            }
+            var len = File.Exists(part) ? new FileInfo(part).Length : 0;
+            if (f.Size > 0 && len != f.Size) throw new Exception("הקובץ שהורד לא שלם. אפשר ללחוץ \"המשך הורדה\".");
+            if (File.Exists(f.Dest)) File.Delete(f.Dest);
+            File.Move(part, f.Dest);
+        }
+
+        /// One connection, appending to the .part file.
+        static void DownloadSimple(Job job, FileItem f)
+        {
+            var part = f.Dest + ".part";
+            job.Connections = 1;
+            try { WriteState(f.Dest, new PartState { Url = f.Url, Name = job.Name, Kind = job.Kind, Mode = "simple", Size = f.Size }); } catch { }
             int failures = 0;
             var buf = new byte[1 << 20];
             while (true)
