@@ -48,7 +48,7 @@ function renderStore() {
   const list = catalog.models.filter(m => m.kind === storeTab);
   const intro = storeTab === 'chat'
     ? 'מודל גדול יותר = חכם יותר אבל איטי יותר וצורך יותר זיכרון. לרוב המחשבים כדאי להתחיל ב-<b>Qwen3.5 9B</b> או ב-<b>Gemma 4 12B</b> לעברית.'
-    : 'מודלי תמונות עובדים על המעבד ולוקח להם זמן: מ-דקה בערך (SD-Turbo) ועד כמה דקות (Z-Image).';
+    : 'מודלי תמונות עובדים על המעבד ולוקח להם זמן: מדקה בערך (SD-Turbo) ועד כ-10 דקות (Z-Image).';
   body.innerHTML = `<p class="store-intro">${intro}</p><div class="cards"></div>` +
     `<div class="store-note">הקבצים יורדים מ-Hugging Face לתיקייה <b>${storeTab === 'image' ? 'מודלים\\תמונות' : 'מודלים'}</b>. אם ההורדה נקטעת, היא תמשיך מאותה נקודה.</div>`;
   const cards = $('.cards', body);

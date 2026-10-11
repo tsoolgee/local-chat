@@ -835,7 +835,7 @@ function imageParams() {
   const id = ((info.name || '') + ' ' + (info.file || '')).toLowerCase();
   // Per-family defaults: [size, steps, cfg]
   let def;
-  if (/z[-_ ]?image/.test(id)) def = ['768x768', 8, 1];                         // big and slow on a CPU: keep it moderate
+  if (/z[-_ ]?image/.test(id)) def = ['512x512', 4, 1];                         // big and slow on a CPU (~10 min per image)
   else if (/sd[-_ ]?turbo|sdxl[-_ ]?turbo|sd_xl_turbo/.test(id)) def = ['512x512', 1, 1]; // one step is enough
   else if (info.fast) def = [info.xl ? '1024x1024' : '512x512', 4, 1];          // lightning / lcm / schnell / hyper
   else def = [info.xl ? '1024x1024' : '512x512', info.xl ? 25 : 20, 7];

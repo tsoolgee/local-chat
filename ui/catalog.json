@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "models": [
     {
       "id": "qwen3.5-2b", "kind": "chat", "name": "Qwen3.5 2B", "folder": "Qwen3.5-2B",
@@ -82,7 +82,7 @@
     },
     {
       "id": "sdxl-turbo", "kind": "image", "name": "SDXL-Turbo", "folder": "SDXL-Turbo",
-      "desc": "איכות ופרטים טובים יותר מ-SD-Turbo, עדיין בצעד אחד. 512×512.",
+      "desc": "איכות ופרטים טובים יותר מ-SD-Turbo, עדיין בצעד אחד. 512×512, בערך פי 2 זמן.",
       "tags": ["fast"], "ram": 7, "speed": "בינוני",
       "files": [
         { "name": "sd_xl_turbo_1.0.q8_0.gguf", "size": 4098988672, "url": "https://huggingface.co/OlegSkutte/sdxl-turbo-GGUF/resolve/main/sd_xl_turbo_1.0.q8_0.gguf" }
@@ -90,7 +90,7 @@
     },
     {
       "id": "z-image-turbo", "kind": "image", "name": "Z-Image Turbo", "folder": "Z-Image-Turbo",
-      "desc": "האיכותי ביותר: מבין תיאורים מורכבים ואפילו טקסט בתמונה. איטי על מעבד (כמה דקות לתמונה).",
+      "desc": "האיכותי ביותר: תמונות מציאותיות ומבין תיאורים מורכבים. איטי מאוד על מעבד: כ-10 דקות לתמונה.",
       "tags": ["smart"], "ram": 12, "speed": "איטי",
       "files": [
         { "name": "z_image_turbo-Q4_0.gguf", "size": 3470775264, "url": "https://huggingface.co/wbruna/Z-Image-Turbo-sdcpp-GGUF/resolve/main/z_image_turbo-Q4_0.gguf" },
