@@ -138,7 +138,7 @@ function openSettings() {
   $('#setTranslate').value = String(S.translate);
   $('#setAutoImg').value = String(S.autoImages);
   $('#setProxy').value = S.proxy || '';
-  $('#setDlMode').value = S.downloadMode || 'fast';
+  $('#setDlMode').value = S.downloadMode || 'auto';
   $('#setDlConns').value = String(S.downloadConnections || 8);
   $('#setDlConns').disabled = $('#setDlMode').value === 'simple';
   $('#setDlMode').onchange = () => { $('#setDlConns').disabled = $('#setDlMode').value === 'simple'; };

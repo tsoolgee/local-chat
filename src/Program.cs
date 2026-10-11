@@ -48,14 +48,14 @@ namespace LocalChat
 
             try
             {
-                Directory.CreateDirectory(ModelsDir);
                 Directory.CreateDirectory(DataDir);
                 Log.Init(Path.Combine(DataDir, "log.txt"));
 
-                if (!File.Exists(Path.Combine(EngineDir, "llama-server.exe")))
+                // creates the folders and unpacks the engines that ship inside the exe
+                var setupError = Setup.EnsureLayout();
+                if (setupError != null)
                 {
-                    MessageBox.Show("חסרה התיקייה engine עם llama-server.exe ליד התוכנה.\nהורידו את הגרסה המלאה (ZIP) מדף ה-Releases.",
-                        "צ'אט מקומי", MessageBoxButtons.OK, MessageBoxIcon.Error,
+                    MessageBox.Show(setupError, "צ'אט מקומי", MessageBoxButtons.OK, MessageBoxIcon.Error,
                         MessageBoxDefaultButton.Button1, MessageBoxOptions.RtlReading | MessageBoxOptions.RightAlign);
                     return;
                 }

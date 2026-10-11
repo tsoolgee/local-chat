@@ -25,11 +25,16 @@
     <Reference Include="System.Drawing" />
     <Reference Include="System.Net.Http" />
     <Reference Include="System.Management" />
+    <Reference Include="System.IO.Compression" />
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="..\ui\**\*" LogicalName="ui/%(RecursiveDir)%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\assets\icon.ico" LogicalName="icon.ico" />
+    <EmbeddedResource Include="..\dist\models-readme.txt" LogicalName="models-readme.txt" />
+    <!-- release builds: the engines travel inside the exe (made by the build workflow) -->
+    <EmbeddedResource Include="..\pkg\engine.zip" LogicalName="engine.zip" Condition="Exists('..\pkg\engine.zip')" />
+    <EmbeddedResource Include="..\pkg\engine-version.txt" LogicalName="engine-version.txt" Condition="Exists('..\pkg\engine-version.txt')" />
   </ItemGroup>
 
 </Project>

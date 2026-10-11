@@ -29,9 +29,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build launcher
-        run: dotnet build src/LocalChat.csproj -c Release -o out
-
       - name: Fetch engines
         shell: pwsh
         run: |
@@ -40,36 +37,49 @@ jobs:
           Expand-Archive llama.zip -DestinationPath llama
           Expand-Archive sd.zip -DestinationPath sd
 
-      - name: Assemble package
+      - name: Pack engines (they go inside the exe)
         shell: pwsh
         run: |
-          $root = "pkg/LocalChat"
-          New-Item -ItemType Directory -Force "$root/engine/sd", "$root/מודלים/תמונות" | Out-Null
-          Copy-Item out/LocalChat.exe $root
-          Copy-Item llama/llama-server.exe, llama/*.dll "$root/engine"
-          Copy-Item sd/sd-server.exe, sd/*.dll "$root/engine/sd"
-          Copy-Item llama/LICENSE* "$root/engine" -ErrorAction SilentlyContinue
-          Copy-Item sd/*.txt "$root/engine/sd" -ErrorAction SilentlyContinue
-          Copy-Item "dist/models-readme.txt" "$root/מודלים/קרא אותי.txt"
-          Compress-Archive -Path $root -DestinationPath LocalChat-win-x64.zip
-          Get-ChildItem -Recurse $root | Measure-Object Length -Sum | % { "Package size: {0:N1} MB" -f ($_.Sum / 1MB) }
+          $e = "pkg/engine"
+          New-Item -ItemType Directory -Force "$e/sd" | Out-Null
+          Copy-Item llama/llama-server.exe, llama/*.dll $e
+          Copy-Item sd/sd-server.exe, sd/*.dll "$e/sd"
+          Copy-Item llama/LICENSE* $e -ErrorAction SilentlyContinue
+          Copy-Item sd/*.txt "$e/sd" -ErrorAction SilentlyContinue
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [IO.Compression.ZipFile]::CreateFromDirectory((Resolve-Path $e), "$PWD/pkg/engine.zip", [IO.Compression.CompressionLevel]::Optimal, $false)
+          "llama $env:LLAMA_TAG / sd $env:SD_TAG" | Set-Content -NoNewline -Encoding utf8 pkg/engine-version.txt
+          "engine.zip: {0:N1} MB" -f ((Get-Item pkg/engine.zip).Length / 1MB)
+
+      - name: Build LocalChat.exe
+        run: dotnet build src/LocalChat.csproj -c Release -o out
+
+      - name: Check
+        shell: pwsh
+        run: |
+          "LocalChat.exe: {0:N1} MB" -f ((Get-Item out/LocalChat.exe).Length / 1MB)
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item out/LocalChat.exe release/
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LocalChat-win-x64
-          path: LocalChat-win-x64.zip
+          name: LocalChat-exe
+          path: release/LocalChat.exe
           retention-days: 14
 
       - name: Smoke test (small chat + image model)
         if: ${{ inputs.smoke_test }}
         shell: pwsh
         run: |
-          # run from a Hebrew-named folder, like a real user might
+          # just the exe, in an empty Hebrew-named folder, like a real user would
           $root = Join-Path $env:RUNNER_TEMP "בדיקה\LocalChat"
-          New-Item -ItemType Directory -Force (Split-Path $root) | Out-Null
-          Copy-Item -Recurse pkg/LocalChat (Split-Path $root)
+          New-Item -ItemType Directory -Force $root | Out-Null
+          Copy-Item release/LocalChat.exe $root
           Start-Process "$root/LocalChat.exe" -ArgumentList "--no-window"
-          Start-Sleep 5
+          for ($i = 0; $i -lt 60 -and -not (Test-Path "$root/נתונים/port.txt"); $i++) { Start-Sleep 1 }
+          Get-ChildItem $root -Recurse -Depth 1 | % { $_.FullName.Substring($root.Length) } | Select -First 20
+          if (-not (Test-Path "$root/engine/llama-server.exe") -or -not (Test-Path "$root/engine/sd/sd-server.exe")) { "engines were not unpacked"; exit 1 }
+          "engine version: " + (Get-Content "$root/engine/version.txt")
           $base = "http://localhost:47800/api"
           # models come in through the app's own downloader
           $imgId = "${{ inputs.image_model }}"

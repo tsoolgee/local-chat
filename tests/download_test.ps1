@@ -76,12 +76,32 @@ Check (-not (Test-Path "$dest.part.json")) 'state file removed when done'
 Set-Mode 'fast' 8
 $u2 = 'https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q8_0.gguf'
 $id2 = (Api 'download' @{ url = $u2 }).id
-do { Start-Sleep -Milliseconds 50; $j = Job $id2 } while ($j.done -lt 2MB -and $j.state -eq 'downloading')
+Start-Sleep -Milliseconds 300
 Api 'download-cancel' @{ id = $id2 } | Out-Null; Wait-Stopped $id2 | Out-Null
 $d2 = Join-Path $Root 'מודלים\SmolLM2-360M-Instruct-Q8_0.gguf'
 Check (Test-Path "$d2.part") 'partial file exists before discard'
 Api 'download-discard' @{ id = $id2 } | Out-Null
 Check (-not (Test-Path "$d2.part") -and -not (Test-Path "$d2.part.json") -and -not (Job $id2)) 'discard deletes files and the list entry'
+
+
+"== automatic mode"
+# fast line: stays on one connection
+irm "$script:base/settings" -Method Put -ContentType 'application/json' -Body (@{ downloadMode = 'auto'; autoSwitchMBps = 0 } | ConvertTo-Json) | Out-Null
+Remove-Item $dest -Force
+$id3 = (Api 'download' @{ url = $url; kind = 'chat' }).id
+Start-Sleep 9; $j = Job $id3
+"  auto on a fast line after 9s: connections=$($j.connections) done=$([int]($j.done/1MB))MB"
+Api 'download-cancel' @{ id = $id3 } | Out-Null; Wait-Stopped $id3 | Out-Null; Api 'download-discard' @{ id = $id3 } | Out-Null
+# pretend the line is slow: must switch to many connections and still produce the right file
+irm "$script:base/settings" -Method Put -ContentType 'application/json' -Body (@{ downloadMode = 'auto'; autoSwitchMBps = 100000 } | ConvertTo-Json) | Out-Null
+$id3 = (Api 'download' @{ url = $url; kind = 'chat' }).id
+Start-Sleep 9; $j = Job $id3
+"  auto on a 'slow' line after 9s: connections=$($j.connections) done=$([int]($j.done/1MB))MB"
+Check ($j.connections -gt 1) 'automatic mode switches to many connections when one is slow'
+$t = [Diagnostics.Stopwatch]::StartNew()
+do { Start-Sleep 2; $j = Job $id3 } while ($j.state -eq 'downloading' -and $t.Elapsed.TotalMinutes -lt 15)
+$h = (Get-FileHash $dest -Algorithm SHA256).Hash.ToLower()
+Check ($j.state -eq 'done' -and $h -eq $sha) "switched download is complete and correct ($h)"
 
 Stop-Process -Id $p.Id -Force
 "SUMMARY simple=$([math]::Round($s1,1))MB/s fast8=$([math]::Round($s8,1))MB/s fast16=$([math]::Round($s16,1))MB/s failures=$script:fail"

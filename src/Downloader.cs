@@ -436,15 +436,28 @@ namespace LocalChat
             var part = f.Dest + ".part";
             // a download keeps the method it started with; a new one follows the setting
             string mode;
+            var setting = Settings().TryGetValue("downloadMode", out var m) ? m as string : "auto";
+            if (setting != "simple" && setting != "fast") setting = "auto";
             if (st != null && st.Size == f.Size && st.Mode == "fast" && st.Chunks != null && File.Exists(part)) mode = "fast";
-            else if (File.Exists(part) && (st == null || st.Mode != "fast")) mode = "simple";
+            else if (File.Exists(part) && (st == null || st.Mode != "fast")) mode = setting == "auto" ? "auto" : "simple";
             else
             {
                 if (File.Exists(part)) File.Delete(part);   // state doesn't match the file: start clean
                 st = null;
-                var s = Settings();
-                mode = s.TryGetValue("downloadMode", out var m) && (m as string) == "simple" ? "simple" : "fast";
+                mode = setting;
             }
+            if (mode == "auto" && f.Size > 64_000_000)
+            {
+                // one connection first; if it is slow, the rest of the file comes over many connections
+                try { DownloadSimple(job, f, probe: true); }
+                catch (SwitchToFastException)
+                {
+                    st = SplitRemainder(job, f);
+                    Log.Write($"Download {job.Name}: one connection is slow, switching to {st.Chunks.Count - 1} connections");
+                    mode = "fast";
+                }
+            }
+            else if (mode == "auto") mode = "simple";
             if (mode == "fast" && f.Size > 8_000_000)
             {
                 try { DownloadFast(job, f, st); }
@@ -567,9 +580,43 @@ namespace LocalChat
             File.Move(part, f.Dest);
         }
 
-        /// One connection, appending to the .part file.
-        static void DownloadSimple(Job job, FileItem f)
+        class SwitchToFastException : Exception { }
+
+        /// Speed (bytes/second) below which one connection is considered slow in automatic mode.
+        /// Measured: the multi-connection engine reaches about 30MB/s, so above that one connection is better.
+        const double AutoSwitchBelow = 25 * 1048576;
+
+        static double AutoThreshold()
         {
+            // settings key "autoSwitchMBps" overrides it (used by the tests)
+            return Settings().TryGetValue("autoSwitchMBps", out var v) && double.TryParse(Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture),
+                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var x) && x > 0 ? x * 1048576 : AutoSwitchBelow;
+        }
+
+        /// The .part file holds bytes [0, X) from one connection: keep them as a finished chunk and split the rest.
+        static PartState SplitRemainder(Job job, FileItem f)
+        {
+            var s = Settings();
+            int conns = s.TryGetValue("downloadConnections", out var c) ? Convert.ToInt32(c) : 8;
+            conns = Math.Max(2, Math.Min(32, conns <= 0 ? 8 : conns));
+            long have = new FileInfo(f.Dest + ".part").Length, rest = f.Size - have, size = rest / conns;
+            var chunks = new List<long[]>();
+            if (have > 0) chunks.Add(new long[] { 0, have - 1, have });
+            for (int i = 0; i < conns; i++)
+            {
+                long start = have + i * size, end = i == conns - 1 ? f.Size - 1 : start + size - 1;
+                chunks.Add(new long[] { start, end, 0 });
+            }
+            var st = new PartState { Url = f.Url, Name = job.Name, Kind = job.Kind, Mode = "fast", Size = f.Size, Chunks = chunks };
+            WriteState(f.Dest, st);
+            return st;
+        }
+
+        /// One connection, appending to the .part file. With probe, gives up after a few seconds if it is slow.
+        static void DownloadSimple(Job job, FileItem f, bool probe = false)
+        {
+            var probeClock = System.Diagnostics.Stopwatch.StartNew();
+            long probeFrom = -1;
             var part = f.Dest + ".part";
             job.Connections = 1;
             try { WriteState(f.Dest, new PartState { Url = f.Url, Name = job.Name, Kind = job.Kind, Mode = "simple", Size = f.Size }); } catch { }
@@ -602,6 +649,16 @@ namespace LocalChat
                                 output.Write(buf, 0, n);
                                 have += n;
                                 job.Current = have;
+                                if (probe)
+                                {
+                                    if (probeFrom < 0) { probeFrom = have; probeClock.Restart(); }
+                                    else if (probeClock.ElapsedMilliseconds >= 5000)
+                                    {
+                                        var bps = (have - probeFrom) * 1000.0 / probeClock.ElapsedMilliseconds;
+                                        probe = false;
+                                        if (bps < AutoThreshold() && f.Size - have > 64_000_000) { output.Flush(); throw new SwitchToFastException(); }
+                                    }
+                                }
                                 var ms = sw.ElapsedMilliseconds;
                                 if (ms - windowAt >= 1000)
                                 {
@@ -616,6 +673,7 @@ namespace LocalChat
                     if (f.Size <= 0 || have >= f.Size) break;
                 }
                 catch (OperationCanceledException) { throw; }
+                catch (SwitchToFastException) { throw; }
                 catch (WebException we) when (we.Response is HttpWebResponse r && (int)r.StatusCode == 416 && f.Size > 0 && have == f.Size) { break; }
                 catch (WebException we) when (we.Response is HttpWebResponse r && (int)r.StatusCode >= 400 && (int)r.StatusCode < 500 && (int)r.StatusCode != 408 && (int)r.StatusCode != 429)
                 {
