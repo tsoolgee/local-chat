@@ -211,6 +211,7 @@ async function pollState() {
     }
     const bn = $('#busyNote');
     if (bn) bn.classList.toggle('hidden', !busy);
+    updateMemNote();
   } catch { engine = { state: 'down' }; renderEngine(); }
   pollTimer = setTimeout(pollState, engine.state === 'loading' || imgEngine().state === 'loading' ? 700 : 4000);
 }
@@ -409,13 +410,13 @@ async function updateChatMeta(id, patch) {
 
 async function deleteChat(c) {
   if (!confirm(`למחוק את השיחה "${c.title}"?`)) return;
+  if (streaming && streaming.chat && streaming.chat.id === c.id) stopStreaming();
   await api('chats/' + c.id, { method: 'DELETE' });
   if (chat && chat.id === c.id) newChat();
   refreshChats();
 }
 
 function newChat() {
-  stopStreaming();
   chat = { id: uid(), title: 'שיחה חדשה', created: Date.now(), updated: Date.now(), pinned: false, messages: [] };
   try { localStorage.removeItem('lastChat'); } catch { }
   renderMessages(); renderChatList();
@@ -424,8 +425,9 @@ function newChat() {
 
 async function openChat(id) {
   if (chat && chat.id === id) return;
-  stopStreaming();
-  try { chat = await api('chats/' + id); } catch { toast('לא ניתן לפתוח את השיחה'); return; }
+  // a reply still running in that chat: show the live object, not the saved copy
+  if (streaming && streaming.chat && streaming.chat.id === id) chat = streaming.chat;
+  else try { chat = await api('chats/' + id); } catch { toast('לא ניתן לפתוח את השיחה'); return; }
   chat.messages = chat.messages || [];
   try { localStorage.setItem('lastChat', id); } catch { }
   renderMessages(true); renderChatList();
@@ -479,9 +481,12 @@ function renderWelcome() {
     ['עזור לי בקוד', 'פונקציית פייתון שממיינת רשימה של מילונים'],
     imageToolAvailable() ? ['צייר לי', 'חתול ג\'ינג\'י ישן על אדן חלון בשקיעה'] : ['תרגם', 'את המשפט "Knowledge is power" לעברית'],
   ];
+  const tiny = !imgMode && e.state === 'ready' && chatModelTooSmall();
   w.innerHTML = `<img class="logo" src="/logo.png" alt=""><h1>${e.state === 'ready' ? (imgMode ? 'יצירת תמונות 🎨' : 'שלום! 👋') : 'צ\'אט מקומי'}</h1><p>${esc(sub)}</p>` +
     (e.state === 'error' ? `<div class="err-box" style="text-align:start;margin-bottom:16px">${esc(e.error || '')}</div>` : '') +
+    (tiny ? `<div class="tiny-hint">המודל שטעון עכשיו זעיר: טוב לבדיקות, אבל העברית שלו חלשה והוא לא יודע לתרגם תיאורים לתמונות. <button class="btn primary" id="wFit">הורדת מודל שמתאים למחשב</button></div>` : '') +
     (e.state !== 'idle' && e.model ? '<div class="suggestions">' + sugg.map(s => `<button class="sugg"><b>${esc(s[0])}</b><span>${esc(s[1])}</span></button>`).join('') + '</div>' : '');
+  if ($('#wFit', w)) $('#wFit', w).onclick = () => openStore('chat');
   w.querySelectorAll('.sugg').forEach((b, i) => b.onclick = () => { $('#input').value = sugg[i][0] + ' ' + sugg[i][1]; autosize(); send(); });
 }
 
@@ -492,6 +497,7 @@ function renderMessages(scrollEnd) {
   renderWelcome();
   markLast();
   updateCtxMeter();
+  updateSendBtn();
   if (scrollEnd !== false) scrollToEnd(true);
 }
 
@@ -800,7 +806,7 @@ function scrollToEnd(force) {
 /* ================= sending ================= */
 function updateSendBtn() {
   const b = $('#sendBtn');
-  if (streaming) { b.classList.add('stop'); b.disabled = false; b.title = 'עצירה (Esc)'; return; }
+  if (streaming && (!streaming.chat || streaming.chat === chat)) { b.classList.add('stop'); b.disabled = false; b.title = 'עצירה (Esc)'; return; }
   b.classList.remove('stop'); b.title = 'שליחה';
   b.disabled = !($('#input').value.trim() || pendingImages.length);
 }
@@ -813,7 +819,10 @@ function autosize() {
 }
 
 async function send() {
-  if (streaming) return;
+  if (streaming) {
+    if (streaming.chat && streaming.chat !== chat) toast(`רגע, המודל עוד עונה בשיחה "${streaming.chat.title}"`);
+    return;
+  }
   const text = $('#input').value.trim();
   if (!text && !pendingImages.length) return;
   if (S.mode === 'image') return sendImage(text);
@@ -983,22 +992,21 @@ async function generate() {
   const live = msg.live = { phase: 'start', t0: performance.now(), n: 0 };
   target.messages.push(msg);
   const ctrl = new AbortController();
-  streaming = { ctrl, msg };
+  streaming = { ctrl, msg, chat: target };
   updateSendBtn();
   const box = $('#messages');
   const node = buildMsg(msg, target.messages.length - 1);
   box.append(node); markLast();
-  const body = $('.body', node);
-  fillAssistant(body, msg, true);
+  fillAssistant($('.body', node), msg, true);
   stick = true; scrollToEnd(true);
 
   let raf = 0;
-  const paint = () => { raf = 0; if (chat === target) { fillAssistant(body, msg, true); scrollToEnd(); } };
+  const paint = () => { raf = 0; const b = bodyOf(target, msg); if (b) { fillAssistant(b, msg, true); scrollToEnd(); } };
   const schedule = () => { if (!raf) raf = requestAnimationFrame(paint); };
   const t0 = performance.now();
   let res = null;
   // the clock and counters keep moving even when no text arrives (long prompts, slow machines)
-  const ticker = setInterval(() => { if (chat === target && msg.live) updateLiveStatus(body, msg); }, 500);
+  const ticker = setInterval(() => { const b = bodyOf(target, msg); if (b && msg.live) updateLiveStatus(b, msg); }, 500);
   const onChunk = j => {
     if (j.prompt_progress) { live.pp = j.prompt_progress; if (live.phase === 'start' || live.phase === 'prompt') live.phase = 'prompt'; }
     if (j.timings) live.timings = j.timings;
@@ -1124,7 +1132,9 @@ async function generate() {
   if (!msg.content && !msg.reasoning && !msg.error && !msg.image) msg.error = 'התשובה נעצרה.';
   streaming = null;
   updateSendBtn();
-  if (chat === target) { fillAssistant(body, msg, false); markLast(); scrollToEnd(); }
+  const fb = bodyOf(target, msg);
+  if (fb) { fillAssistant(fb, msg, false); markLast(); scrollToEnd(); }
+  else if (chat !== target) toast(`התשובה בשיחה "${target.title}" מוכנה`);
   persist(target);
 }
 
@@ -1208,15 +1218,14 @@ async function resumeJobs(target) {
   const img = m.kind === 'image' ? m : m.image;
   if (!img || !img.jobId || (img.images && img.images.length)) return;
   const ctrl = new AbortController();
-  streaming = { ctrl, msg: m, jobId: img.jobId };
+  streaming = { ctrl, msg: m, jobId: img.jobId, chat: target };
   updateSendBtn();
-  const node = $('#messages').lastElementChild;
-  const body = node && $('.body', node);
   const t0 = performance.now();
   img.t0 = t0;
   if (m.kind !== 'image') m.live = { phase: 'image', t0, n: 0 };
   const paint = () => {
-    if (chat !== target || !body) return;
+    const body = bodyOf(target, m);
+    if (!body) return;
     if (m.kind === 'image') fillImage(body, m, true); else fillAssistant(body, m, true);
     scrollToEnd();
   };
@@ -1229,8 +1238,16 @@ async function resumeJobs(target) {
   delete img.jobId; delete img.count; delete img.steps; delete img.status; delete img.preview; delete img.t0; delete m.live;
   streaming = null;
   updateSendBtn();
-  if (chat === target && body) { if (m.kind === 'image') fillImage(body, m, false); else fillAssistant(body, m, false); markLast(); }
+  const body = bodyOf(target, m);
+  if (body) { if (m.kind === 'image') fillImage(body, m, false); else fillAssistant(body, m, false); markLast(); }
   persist(target);
+}
+
+/** The on-screen body of a message, or null when its chat isn't the one shown. */
+function bodyOf(target, m) {
+  if (chat !== target) return null;
+  const node = $('#messages').children[target.messages.indexOf(m)];
+  return node ? $('.body', node) : null;
 }
 
 function stopStreaming() {
@@ -1242,6 +1259,21 @@ function stopStreaming() {
 const HEB = /[֐-׿]/;
 
 /** Image models understand English: let the chat model rewrite a Hebrew request as an English prompt. */
+/** Warns when RAM is almost gone (with hysteresis, so it doesn't flicker). */
+let memLow = false;
+function updateMemNote() {
+  const box = $('#memNote');
+  if (!box || !engine.ram) return;
+  const free = engine.ram.free, both = engine.state === 'ready' && imgEngine().state === 'ready';
+  if (!memLow && free < 450e6) memLow = true;
+  else if (memLow && free > 900e6) memLow = false;
+  box.classList.toggle('hidden', !memLow);
+  $('.t', box).textContent = both
+    ? 'הזיכרון כמעט מלא, ולכן הכול איטי. כדאי לפרוק את אחד המודלים.'
+    : 'הזיכרון כמעט מלא, ולכן הכול איטי. כדאי לסגור תוכנות אחרות או לבחור מודל קטן יותר.';
+  $('button', box).classList.toggle('hidden', !both);
+}
+
 /** Models under ~1GB (SmolLM2 135M/360M…) invent text instead of translating. */
 function chatModelTooSmall() {
   const info = models.find(x => x.file === engine.model);
@@ -1300,12 +1332,11 @@ async function generateImage() {
   const msg = { role: 'assistant', kind: 'image', size: p.size, status: 'מכין…', images: [] };
   target.messages.push(msg);
   const ctrl = new AbortController();
-  streaming = { ctrl, msg };
+  streaming = { ctrl, msg, chat: target };
   updateSendBtn();
   const node = buildMsg(msg, target.messages.length - 1);
   $('#messages').append(node); markLast();
-  const body = $('.body', node);
-  const paint = () => { if (chat === target) { fillImage(body, msg, true); scrollToEnd(); } };
+  const paint = () => { const b = bodyOf(target, msg); if (b) { fillImage(b, msg, true); scrollToEnd(); } };
   paint();
   stick = true; scrollToEnd(true);
 
@@ -1323,7 +1354,9 @@ async function generateImage() {
   delete msg.preview; delete msg.status; delete msg.note; delete msg.t0;
   streaming = null;
   updateSendBtn();
-  if (chat === target) { fillImage(body, msg, false); markLast(); scrollToEnd(); }
+  const fb = bodyOf(target, msg);
+  if (fb) { fillImage(fb, msg, false); markLast(); scrollToEnd(); }
+  else if (chat !== target) toast(`התמונה בשיחה "${target.title}" מוכנה`);
   persist(target);
 }
 
@@ -1369,7 +1402,8 @@ function wire() {
   });
   $('#composer').addEventListener('dragover', e => e.preventDefault());
   $('#composer').addEventListener('drop', e => { e.preventDefault(); [...e.dataTransfer.files].forEach(addImageFile); });
-  $('#sendBtn').onclick = () => streaming ? stopStreaming() : send();
+  $('#memUnload').onclick = async () => { await api('image-unload', { method: 'POST' }); toast('מודל התמונות נפרק. הוא ייטען שוב כשתבקשו תמונה.'); pollState(); };
+  $('#sendBtn').onclick = () => streaming && (!streaming.chat || streaming.chat === chat) ? stopStreaming() : send();
   $('#attachBtn').onclick = () => $('#fileInput').click();
   $('#fileInput').onchange = e => { [...e.target.files].forEach(addImageFile); e.target.value = ''; };
 
@@ -1417,7 +1451,7 @@ function wire() {
       if (!$('#lightbox').classList.contains('hidden')) $('#lightbox').classList.add('hidden');
       else if (!$('#store').classList.contains('hidden')) closeStore();
       else if (!$('#modal').classList.contains('hidden')) closeModal();
-      else if (streaming) stopStreaming();
+      else if (streaming && (!streaming.chat || streaming.chat === chat)) stopStreaming();
       else closeMenus();
     }
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'o') { e.preventDefault(); newChat(); }
@@ -1435,6 +1469,12 @@ async function init() {
   try { Object.assign(S, await api('settings') || {}); } catch { }
   applySettings();
   await refreshModels();
+  api('update').then(u => {
+    if (!u || !u.newer) return;
+    const a = $('#updateNote');
+    a.href = u.url; a.classList.remove('hidden');
+    $('span', a).textContent = `גרסה ${u.latest} זמינה להורדה`;
+  }).catch(() => { });
   let last = null;
   try { last = localStorage.getItem('lastChat'); } catch { }
   newChat();

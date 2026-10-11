@@ -36,6 +36,10 @@
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
         <span>הגדרות</span>
       </button>
+      <a class="side-link update-note hidden" id="updateNote" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+        <span></span>
+      </a>
       <div class="ram" id="ramInfo"></div>
     </div>
   </aside>
@@ -122,6 +126,7 @@
         </div>
       </div>
       <div class="hint">
+        <span id="memNote" class="mem-note hidden"><span class="t"></span><button class="link-btn" id="memUnload">פריקת מודל התמונות</button></span>
         <span id="busyNote" class="busy-note hidden"><span class="spin"></span>המודל עדיין מסיים תשובה קודמת…</span>
         <span id="ctxMeter" class="ctx-meter hidden"><span class="bar"><i></i></span><span class="t"></span></span>
         <span>המודל רץ אצלכם במחשב, בלי אינטרנט. הוא יכול לטעות.</span>

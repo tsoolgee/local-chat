@@ -199,6 +199,39 @@ namespace LocalChat
             try { if (Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any()) Directory.Delete(dir); } catch { }
         }
 
+        static string _update;
+        static DateTime _updateAt = DateTime.MinValue;
+
+        /// Newest release on GitHub vs. this build: {current, latest, url, newer}. Cached for 6 hours.
+        public static string UpdateInfo()
+        {
+            var current = typeof(Downloader).Assembly.GetName().Version;
+            var cur = current.Major + "." + current.Minor + "." + current.Build;
+            if (_update == null || (DateTime.UtcNow - _updateAt).TotalHours > 6)
+            {
+                _updateAt = DateTime.UtcNow;
+                try
+                {
+                    var req = NewRequest("https://api.github.com/repos/tsoolgee/local-chat/releases/latest");
+                    req.Timeout = 8000; req.ReadWriteTimeout = 8000;
+                    req.Accept = "application/vnd.github+json";
+                    using (var res = req.GetResponse())
+                    using (var r = new StreamReader(res.GetResponseStream(), Encoding.UTF8))
+                    {
+                        var d = Store.Json.Deserialize<Dictionary<string, object>>(r.ReadToEnd());
+                        var tag = ((d["tag_name"] as string) ?? "").TrimStart('v', 'V');
+                        var newer = System.Version.TryParse(tag, out var lv) && lv > new System.Version(cur);
+                        _update = Store.Json.Serialize(new Dictionary<string, object>
+                        {
+                            ["current"] = cur, ["latest"] = tag, ["url"] = d["html_url"], ["newer"] = newer,
+                        });
+                    }
+                }
+                catch { _update = null; }
+            }
+            return _update ?? Store.Json.Serialize(new Dictionary<string, object> { ["current"] = cur, ["newer"] = false });
+        }
+
         public static string Status()
         {
             lock (Lock)

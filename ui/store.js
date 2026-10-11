@@ -45,7 +45,9 @@ function renderStore() {
   const body = $('#storeBody');
   if (storeTab === 'url') return renderUrlTab(body);
 
-  const list = catalog.models.filter(m => m.kind === storeTab);
+  const fitId = bestFit(storeTab, ram);
+  // the one that fits this computer comes first
+  const list = catalog.models.filter(m => m.kind === storeTab).sort((a, b) => (b.id === fitId) - (a.id === fitId));
   const intro = storeTab === 'chat'
     ? 'מודל גדול יותר = חכם יותר אבל איטי יותר וצורך יותר זיכרון. לרוב המחשבים כדאי להתחיל ב-<b>Qwen3.5 9B</b> או ב-<b>Gemma 4 12B</b> לעברית.'
     : 'מודלי תמונות עובדים על המעבד ולוקח להם זמן: מדקה בערך (SD-Turbo) ועד כ-10 דקות (Z-Image).';
@@ -53,6 +55,21 @@ function renderStore() {
     `<div class="store-note">הקבצים יורדים מ-Hugging Face לתיקייה <b>${storeTab === 'image' ? 'מודלים\\תמונות' : 'מודלים'}</b>. אם ההורדה נקטעת, היא תמשיך מאותה נקודה.</div>`;
   const cards = $('.cards', body);
   for (const m of list) cards.append(buildCard(m, ram));
+}
+
+/** The best model of a kind for this computer: the biggest one that leaves room for the other kind of model. */
+function bestFit(kind, ram) {
+  const gb = ram / 1073741824;
+  if (!gb) return null;
+  const share = kind === 'chat' ? 0.6 : 0.4;
+  // very slow image models (minutes per picture) are never the default suggestion
+  const list = catalog.models.filter(m => m.kind === kind && !(kind === 'image' && m.speed === 'איטי')).sort((a, b) => a.ram - b.ram);
+  const fits = list.filter(m => m.ram <= gb * share);
+  if (!fits.length) return list[0] && list[0].id;
+  const top = fits[fits.length - 1].ram;
+  // among equally big ones prefer "recommended", then Hebrew
+  const same = fits.filter(m => m.ram === top);
+  return (same.find(m => (m.tags || []).includes('recommended')) || same.find(m => (m.tags || []).includes('hebrew')) || same[0]).id;
 }
 
 function buildCard(m, ram) {
@@ -65,7 +82,7 @@ function buildCard(m, ram) {
 
   const c = el('div', 'card' + (m.installed ? ' installed' : ''));
   c.innerHTML = `<h4>${esc(m.name)}</h4>
-    <div class="meta">${(m.tags || []).map(t => TAGS[t] ? `<span class="tag ${TAGS[t][1]}">${TAGS[t][0]}</span>` : '').join('')}</div>
+    <div class="meta">${bestFit(m.kind, ram) === m.id ? '<span class="tag fit">✓ מתאים למחשב שלך</span>' : ''}${(m.tags || []).map(t => TAGS[t] ? `<span class="tag ${TAGS[t][1]}">${TAGS[t][0]}</span>` : '').join('')}</div>
     <div class="desc">${esc(m.desc)}</div>
     <div class="meta"><span class="m">${fmtSize(size)}</span><span class="m${tooBig ? ' bad' : ''}">זיכרון: ⁦${m.ram}GB+⁩</span><span class="m">מהירות: ${esc(m.speed || '')}</span></div>`;
 

@@ -78,6 +78,7 @@ namespace LocalChat
                 return;
             }
             if (route == "image-models") { SendJson(res, Engine.ListImageModels()); return; }
+            if (route == "update") { SendText(res, Downloader.UpdateInfo(), "application/json; charset=utf-8"); return; }
             if (route == "catalog") { SendText(res, Downloader.CatalogWithStatus(), "application/json; charset=utf-8"); return; }
             if (route == "downloads") { SendText(res, Downloader.Status(), "application/json; charset=utf-8"); return; }
             if (route.StartsWith("download") || route == "model-delete")
