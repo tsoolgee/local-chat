@@ -48,9 +48,13 @@ do { Start-Sleep -Milliseconds 200; $j = Job $id } while ($j.done -lt 0.15 * [ma
 Api 'download-cancel' @{ id = $id } | Out-Null; Wait-Stopped $id | Out-Null
 $j = Job $id; "  after cancel: state=$($j.state) done=$([int]($j.done/1MB))MB"
 Check ($j.state -eq 'cancelled') 'cancel stops the download'
+"  .part exists: $(Test-Path "$dest.part")  .part.json exists: $(Test-Path "$dest.part.json")"
+$kept = $j.done
 Check (Test-Path "$dest.part.json") 'state file kept after cancel'
 # continue, then kill the app hard in the middle
 Api 'download-resume' @{ id = $id } | Out-Null
+Start-Sleep 3; $j = Job $id
+Check ($j.done -ge $kept * 0.95) "resume after cancel continues from $([int]($kept/1MB))MB (now $([int]($j.done/1MB))MB)"
 do { Start-Sleep -Milliseconds 200; $j = Job $id } while ($j.done -lt 0.4 * [double]$j.total -and $j.state -eq 'downloading')
 "  before kill: done=$([int]($j.done/1MB))MB"
 Stop-Process -Id $p.Id -Force; Start-Sleep 2

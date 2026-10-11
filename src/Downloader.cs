@@ -514,13 +514,15 @@ namespace LocalChat
                 if (pkg?.Chunks == null || pkg.Chunks.Length == 0) return;
                 if (!pkg.IsSupportDownloadInRange) return;
                 var snap = pkg.Chunks.Select(x => new[] { x.Start, x.End, x.Position }).ToList();
+                // never go backwards: when stopping, the library may already have reset its chunks
+                if (st.Chunks != null && snap.Sum(x => x[2]) < st.Chunks.Sum(x => x[2])) return;
                 try { pkg.Flush(); } catch { }        // bytes on disk before positions are recorded
                 st.Chunks = snap;
                 try { WriteState(f.Dest, st); } catch { }
             }
             while (!task.IsCompleted && !finished)
             {
-                if (job.Cancel) { svc.CancelAsync(); break; }
+                if (job.Cancel) { Save(); svc.CancelAsync(); break; }   // record progress before the library tears down
                 Thread.Sleep(250);
                 if ((DateTime.UtcNow - lastSave).TotalSeconds >= 5) { Save(); lastSave = DateTime.UtcNow; }
             }
@@ -529,6 +531,8 @@ namespace LocalChat
             if (pk != null && pk.TotalFileSize > 0 && !pk.IsSupportDownloadInRange && !finished) throw new NotSupportedException();
             Save();
             try { pk?.Storage?.Dispose(); } catch { }
+            // without the data file the saved positions are meaningless: start over next time
+            if (!File.Exists(part) && File.Exists(f.Dest + ".part.json")) File.Delete(f.Dest + ".part.json");
             try { svc.Dispose(); } catch { }
 
             if (job.Cancel || cancelled) throw new OperationCanceledException();
