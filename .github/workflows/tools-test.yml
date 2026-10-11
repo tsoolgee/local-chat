@@ -1,0 +1,49 @@
+name: tools-test
+
+# How each chat model handles the image tool, with the app's own prompts.
+on:
+  workflow_dispatch:
+
+env:
+  LLAMA_TAG: b11552
+
+jobs:
+  model:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Qwen3.5-2B
+            url: https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf
+          - name: Qwen3.5-4B
+            url: https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf
+          - name: Gemma-4-E4B
+            url: https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf
+          - name: SmolLM2-360M
+            url: https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q8_0.gguf
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Engine and model
+        shell: pwsh
+        run: |
+          gh release download $env:LLAMA_TAG -R ggml-org/llama.cpp -p "llama-$env:LLAMA_TAG-bin-win-cpu-x64.zip" -O llama.zip
+          Expand-Archive llama.zip -DestinationPath llama
+          curl.exe -sSL -o model.gguf "${{ matrix.url }}"
+          (Get-Item model.gguf).Length / 1MB
+      - name: Run
+        shell: pwsh
+        run: |
+          $p = Start-Process llama/llama-server.exe -ArgumentList '-m model.gguf -c 8192 --port 8090 -np 1 --no-webui --jinja -ngl 0' -PassThru -RedirectStandardError server.log
+          for ($i = 0; $i -lt 120; $i++) { try { if ((irm http://127.0.0.1:8090/health).status -eq 'ok') { break } } catch {}; Start-Sleep 2 }
+          python -X utf8 tests/tool_test.py 8090 ui/app.js | Tee-Object result.txt
+          Stop-Process $p
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tools-${{ matrix.name }}
+          path: |
+            result.txt
+            server.log

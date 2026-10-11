@@ -533,9 +533,59 @@ const IMAGE_TOOL = {
     },
   },
 };
-const TOOL_HINT = 'You can create pictures. When the user asks you to draw, create or show an image, call the generate_image tool with a detailed English prompt, even if the user wrote in Hebrew. The picture is then shown to the user automatically, so do not explain how to draw it and do not invent links. Always answer the user in the language they wrote in.';
+/** Always sent first; the user's own system prompt (settings) is added after it. */
+function baseSystem() {
+  const d = new Date();
+  const date = d.toLocaleDateString('he-IL', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  return `You are a helpful, friendly AI assistant that runs fully offline on the user's own computer (no internet access). Today is ${date}.
+Reply in the language the user writes in. Usually that is Hebrew: write natural, correct Hebrew, right-to-left, without mixing in English words unless needed (code, names).
+Be clear and to the point. Use Markdown (short lists, tables, code blocks) when it helps readability.`;
+}
+
+const TOOL_HINT = `You are connected to a local image generator through the generate_image tool.
+When the user asks for a picture (draw, paint, create, generate, show, design a picture, photo, illustration, drawing, logo, poster, wallpaper, icon), or asks to change a picture you already made, call generate_image.
+The prompt argument must be in English, detailed and visual: subject, important details, setting, style (photo, illustration, oil painting, 3D, logo...), lighting and colors. When changing an earlier picture, write the full new description including the change.
+Never say that you cannot create images. Do not describe the picture in words instead of creating it, and never write links or Markdown images; the picture is shown to the user automatically.
+For all other messages just answer normally, without the tool.`;
+
+/** Recognizes a request for a picture, so even models that never call tools still produce one. */
+function looksLikeImageRequest(text, msgs, hasAttachments) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t || t.length > 500) return false;
+  const W = '(?:^|[\\s,.!?:;"\'״׳(\\-])';
+  const draw = new RegExp(W + '[ושכה]?(צייר|ציירי|תצייר|תציירי|ציירו|תציירו|תאייר|draw|paint|sketch|illustrate)');
+  const ask = /(אפשר|תוכל|תוכלי|תוכלו|אתה יכול|את יכולה|אני רוצה|רוצה|בבקשה|can you|could you|can i (get|have)|i want|i'd like|please)/;
+  const make = new RegExp(W + '[ושכה]?(צור|צרי|תיצור|תצור|תיצרי|ליצור|צרו|תעשה|תעשי|לעשות|תכין|תכיני|הכן|להכין|תראה|תראי|הראה|תן|תני|תביא|תביאי|תעצב|תעצבי|עצב|לעצב|תפיק|generate|create|make|show|give|design|render|produce)');
+  const noun = new RegExp(W + '[הלבו]?(תמונה|תמונת|תמונות|ציור|איור|לוגו|סמליל|פוסטר|כרזה|רקע למסך|טפט|אייקון|image|picture|photo|drawing|illustration|logo|poster|wallpaper|icon|artwork)');
+  // "how do you draw a cat?" is a question, not a request
+  const question = /^(איך|כיצד|למה|מדוע|מה זה|מהו|מהי|מה ההבדל|האם|מי|how|why|what is|what's|who|is |are |can you explain)/;
+  if (/^(תרגם|תתרגם|תתרגמי|translate|תקן|תתקן|proofread|summarize|תסכם)/.test(t)) return false;
+  if (question.test(t) && !/(צייר לי|תצייר לי|תיצור לי|תעשה לי|draw me|create me|make me)/.test(t)) return false;
+  if (hasAttachments) return draw.test(t);
+  if (draw.test(t)) return true;
+  if (make.test(t) && noun.test(t)) return true;
+  if (/(אפשר|אני רוצה|רוצה|בבקשה|i want|i'd like|can i (get|have)|please)\s+(לקבל\s+|an?\s+)?[ה]?(תמונה|ציור|איור|לוגו|image|picture|photo|drawing|logo)/.test(t)) return true;
+  if (ask.test(t) && /(לצייר|לאייר|ליצור תמונה|לעשות תמונה|להכין תמונה|to draw|to paint)/.test(t)) return true;
+  if (new RegExp('^(תמונה|תמונת|ציור|איור|לוגו|image|picture|photo|drawing|logo)\\s+(של|ל|of|for)').test(t)) return true;
+  // a short follow-up right after a picture: "now in blue", "add a hat", "make it bigger"
+  const prev = [...msgs].reverse().find(m => m.role === 'assistant' && !m.live);
+  if (prev && (prev.image || prev.kind === 'image') && t.length < 160 &&
+    /^(עכשיו|עכשו|ועכשיו|תוסיף|תוסיפי|הוסף|תשנה|תשני|שנה|תהפוך|תעשה|תעשי|תצבע|תצבעי|תוריד|בלי|עם|יותר|פחות|באותו|אותו|אותה|שוב|עוד|במקום|אבל|now|add|change|make it|without|with|more|less|same|again|another|instead|but)/.test(t)) return true;
+  return false;
+}
+
+/** The English description of the most recent picture in a chat, if any. */
+function lastImagePrompt(msgs) {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    const p = (m.image && m.image.prompt) || (m.kind === 'image' && m.prompt);
+    if (p) return p;
+  }
+  return '';
+}
 
 /** The chat model gets the image tool when the user allows it and an image model exists. */
+const toolsBroken = new Set();   // models whose chat template rejected tools
 function imageToolAvailable() {
   return !!S.autoImages && imageModels.length > 0 && imgEngine().available !== false;
 }
@@ -836,8 +886,8 @@ function buildApiMessages(withTools, exclude) {
     out.unshift(...toApi(m, i, withTools));
   }
   while (out.length && out[0].role !== 'user') out.shift();
-  const sys = [S.system, withTools ? TOOL_HINT : ''].filter(Boolean).join('\n\n');
-  if (sys) out.unshift({ role: 'system', content: sys });
+  const sys = [baseSystem(), withTools ? TOOL_HINT : '', S.system].filter(Boolean).join('\n\n');
+  out.unshift({ role: 'system', content: sys });
   return out;
 }
 
@@ -944,22 +994,37 @@ async function generate() {
       if (d.tool_calls) live.phase = 'tool';
       schedule();
     };
-    let withTools = imageToolAvailable();
-    let messages = buildApiMessages(withTools, msg);
-    try {
-      res = await streamChat({ ...base, messages, ...(withTools ? { tools: [IMAGE_TOOL] } : {}) }, ctrl.signal, onDelta, onChunk);
-    } catch (e) {
-      // some chat templates can't do tools: retry once without them
-      if (!withTools || !e.status || e.status >= 500 || msg.content) throw e;
-      withTools = false;
-      msg.reasoning = '';
-      messages = buildApiMessages(false, msg);
-      res = await streamChat({ ...base, messages }, ctrl.signal, onDelta, onChunk);
+    const userMsg = target.messages[target.messages.indexOf(msg) - 1] || {};
+    const canDraw = imageToolAvailable();
+    // the app itself recognizes picture requests; then the model is made to produce one (no "deciding")
+    const wantsImage = canDraw && looksLikeImageRequest(userMsg.content, target.messages.slice(0, -1), userMsg.images && userMsg.images.length);
+    let withTools = canDraw && !toolsBroken.has(engine.model);
+    res = null;
+    if (withTools) {
+      try {
+        res = await streamChat({
+          ...base, messages: buildApiMessages(true, msg), tools: [IMAGE_TOOL],
+          ...(wantsImage ? { tool_choice: 'required', chat_template_kwargs: { enable_thinking: false } } : {}),
+        }, ctrl.signal, onDelta, onChunk);
+      } catch (e) {
+        // this model's chat template can't do tools: remember, and carry on without them
+        if (!e.status || e.status >= 500 || msg.content) throw e;
+        toolsBroken.add(engine.model);
+        withTools = false;
+        msg.reasoning = ''; live.phase = 'start';
+      }
     }
+    if (!res && !wantsImage) res = await streamChat({ ...base, messages: buildApiMessages(false, msg) }, ctrl.signal, onDelta, onChunk);
 
-    const call = res.toolCalls.find(c => c.function.name === 'generate_image');
+    let call = res && res.toolCalls.find(c => c.function.name === 'generate_image');
+    const native = !!call;
+    // the user clearly asked for a picture but the model didn't call the tool: do it for it
+    if (!call && wantsImage && !(res && splitThink(msg.content).text.length > 400)) {
+      call = { id: 'call_' + uid(), function: { arguments: '{}' } };
+      msg.content = ''; msg.reasoning = '';
+    }
     if (call) {
-      const userText = (target.messages[target.messages.indexOf(msg) - 1] || {}).content || '';
+      const userText = userMsg.content || '';
       const args = parseToolArgs(call.function.arguments);
       const p = imageParams(args.shape);
       const img = msg.image = { prompt: String(args.prompt || '').trim(), size: p.size, status: 'מכין…', images: [] };
@@ -967,7 +1032,10 @@ async function generate() {
       msg.tool = { id: call.id || 'call_' + uid() };
       schedule();
       try {
-        if (!img.prompt || HEB.test(img.prompt)) img.prompt = await toEnglishPrompt(img.prompt || userText, ctrl.signal);
+        if (!img.prompt || HEB.test(img.prompt)) {
+          img.status = 'מנסח תיאור לתמונה…'; schedule();
+          img.prompt = await toEnglishPrompt(img.prompt || userText, ctrl.signal, native ? '' : lastImagePrompt(target.messages.slice(0, -2)));
+        }
         await ensureImageEngine(img, schedule, ctrl.signal);
         await runImageJob(img, p, ctrl.signal, schedule);
       } catch (e) {
@@ -975,16 +1043,20 @@ async function generate() {
         img.error = e.message === 'Failed to fetch' ? 'אין חיבור למנוע התמונות.' : e.message;
       }
       delete img.status; delete img.preview;
+      if (!native) {
+        if (!splitThink(msg.content).text.trim()) msg.content = img.error ? '' : 'בשמחה! הנה התמונה:';
+      } else {
       // a short reply after the picture, like a person would add
       msg.after = '';
       live.phase = 'after';
       const follow = buildApiMessages(true, null);
       try {
-        await streamChat({ ...base, messages: follow, max_tokens: 160, chat_template_kwargs: { enable_thinking: false } }, ctrl.signal, d => {
+        await streamChat({ ...base, messages: follow, max_tokens: 120, chat_template_kwargs: { enable_thinking: false } }, ctrl.signal, d => {
           if (d.content) { msg.after += d.content; schedule(); }
         });
       } catch (e) { if (e.name === 'AbortError') throw e; }
       if (!msg.after.trim()) delete msg.after;
+      }
     }
   } catch (e) {
     if (e.name !== 'AbortError') {
@@ -1080,14 +1152,15 @@ function stopStreaming() {
 const HEB = /[֐-׿]/;
 
 /** Image models understand English: let the chat model rewrite a Hebrew request as an English prompt. */
-async function toEnglishPrompt(text, signal) {
-  if (!HEB.test(text) || !S.translate || engine.state !== 'ready') return text;
+async function toEnglishPrompt(text, signal, prev) {
+  if (engine.state !== 'ready' || (!prev && (!HEB.test(text) || !S.translate))) return text;
+  const user = prev ? `Previous picture: ${prev}\nRequested change: ${text}` : text;
   const r = await fetch(`http://127.0.0.1:${engine.port}/v1/chat/completions`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
     body: JSON.stringify({
       messages: [
-        { role: 'system', content: 'You turn requests into prompts for an image generation model. Reply with ONE short English prompt only: the subject, setting, style and lighting as comma-separated phrases. No quotes, no explanations.' },
-        { role: 'user', content: text },
+        { role: 'system', content: 'You write prompts for an image generation model. Reply with ONE English prompt only: subject, details, setting, style and lighting as comma-separated phrases. If a previous picture is given, write the full new prompt with the requested change applied. No quotes, no explanations.' },
+        { role: 'user', content: user },
       ],
       temperature: 0.2, max_tokens: 120, stream: false, reasoning_format: 'none', chat_template_kwargs: { enable_thinking: false },
     }),
@@ -1097,7 +1170,7 @@ async function toEnglishPrompt(text, signal) {
   let out = ((j.choices && j.choices[0].message && j.choices[0].message.content) || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
   out = out.split('\n').filter(Boolean).pop() || '';
   out = out.replace(/^(prompt\s*:)/i, '').replace(/^["'\s]+|["'\s]+$/g, '');
-  return out && !HEB.test(out) ? out : text;
+  return out && !HEB.test(out) ? out : (prev && !HEB.test(text) ? prev + ', ' + text : text);
 }
 
 function imageParams(shape) {
