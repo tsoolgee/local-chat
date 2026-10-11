@@ -406,3 +406,7 @@ pre.log { direction: ltr; text-align: left; font-size: 12px; max-height: 60vh; o
 .ctx-meter.warn .bar i { background: #f59e0b; }
 .ctx-meter.full .bar i { background: var(--danger); }
 .ctx-meter.full .t { color: var(--danger); }
+
+.gen-note { font-size: 12.5px; color: #d97706; background: rgba(245, 158, 11, .1); border-radius: 10px; padding: 6px 10px; margin-top: 6px; }
+.busy-note { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); }
+.busy-note .spin { width: 10px; height: 10px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color: var(--accent); animation: spin .8s linear infinite; }

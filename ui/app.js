@@ -204,6 +204,13 @@ async function pollState() {
     if (ip === 'loading' && is === 'ready') toast('מודל התמונות מוכן');
     if (ip === 'loading' && is === 'error') toast('טעינת מודל התמונות נכשלה: ' + (imgEngine().error || ''), 6000);
     pollState.imgPrev = is;
+    // a reply that was running before a refresh keeps the engine busy for a while
+    let busy = false;
+    if (engine.state === 'ready' && engine.port && !streaming) {
+      try { busy = (await (await fetch(`http://127.0.0.1:${engine.port}/slots`)).json()).some(x => x.is_processing); } catch { }
+    }
+    const bn = $('#busyNote');
+    if (bn) bn.classList.toggle('hidden', !busy);
   } catch { engine = { state: 'down' }; renderEngine(); }
   pollTimer = setTimeout(pollState, engine.state === 'loading' || imgEngine().state === 'loading' ? 700 : 4000);
 }
@@ -410,6 +417,7 @@ async function deleteChat(c) {
 function newChat() {
   stopStreaming();
   chat = { id: uid(), title: 'שיחה חדשה', created: Date.now(), updated: Date.now(), pinned: false, messages: [] };
+  try { localStorage.removeItem('lastChat'); } catch { }
   renderMessages(); renderChatList();
   $('#input').focus();
 }
@@ -419,7 +427,9 @@ async function openChat(id) {
   stopStreaming();
   try { chat = await api('chats/' + id); } catch { toast('לא ניתן לפתוח את השיחה'); return; }
   chat.messages = chat.messages || [];
+  try { localStorage.setItem('lastChat', id); } catch { }
   renderMessages(true); renderChatList();
+  resumeJobs(chat);
   if (innerWidth < 760) saveSettings({ sideHidden: true });
 }
 
@@ -427,7 +437,9 @@ let saveChain = Promise.resolve();
 function persist(c = chat, touch = true) {
   if (!c || !c.messages.length) return saveChain;
   if (touch) c.updated = Date.now();
-  const snapshot = JSON.stringify(c);
+  if (c === chat) try { localStorage.setItem('lastChat', c.id); } catch { }
+  // transient view state is never stored
+  const snapshot = JSON.stringify(c, (k, v) => k === 'live' || k === 'preview' || k === 'status' ? undefined : v);
   saveChain = saveChain.then(() => fetch('/api/chats/' + c.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: snapshot }))
     .then(() => refreshChats()).catch(() => toast('שמירת השיחה נכשלה'));
   return saveChain;
@@ -574,6 +586,12 @@ function looksLikeImageRequest(text, msgs, hasAttachments) {
   return false;
 }
 
+/** Questions and text tasks that only mention pictures ("how do you draw a cat?"): no tool for these. */
+function clearlyNotImage(text) {
+  const t = String(text || '').trim().toLowerCase();
+  return /^(איך|כיצד|למה|מדוע|מה זה|מהו|מהי|מה ההבדל|מה|האם|מי|מתי|איפה|כמה|הסבר|תסביר|תסבירי|תרגם|תתרגם|תתרגמי|תקן|תתקן|תסכם|סכם|כתוב|תכתוב|תכתבי|how|why|what|who|when|where|explain|translate|summarize|write|is |are |can you explain)/.test(t);
+}
+
 /** The English description of the most recent picture in a chat, if any. */
 function lastImagePrompt(msgs) {
   for (let i = msgs.length - 1; i >= 0; i--) {
@@ -669,6 +687,7 @@ function renderImageBlock(container, img, live) {
     container.append(wbox);
   }
   if (img.error) container.append(el('div', 'err-box', esc(img.error)));
+  if (img.warn && !img.error) container.append(el('div', 'gen-note', esc(img.warn)));
   if (img.prompt) container.append(el('div', 'gen-prompt', esc(img.prompt)));
 }
 
@@ -867,7 +886,7 @@ function toApi(m, idx, withTools) {
   const id = (m.tool && m.tool.id) || 'call_' + idx;
   const out = [
     { role: 'assistant', content: text || '', tool_calls: [{ id, type: 'function', function: { name: 'generate_image', arguments: JSON.stringify({ prompt }) } }] },
-    { role: 'tool', tool_call_id: id, content: ok ? 'The picture was created and is now shown to the user.' : 'The picture could not be created: ' + (img.error || 'unknown error') },
+    { role: 'tool', tool_call_id: id, content: ok ? 'The picture was created and is already shown to the user. If you reply, write one short friendly sentence in the language the user wrote in. No links and no Markdown images.' : 'The picture could not be created: ' + (img.error || 'unknown error') },
   ];
   if (after) out.push({ role: 'assistant', content: after });
   return out;
@@ -948,6 +967,10 @@ async function streamChat(payload, signal, onDelta, onChunk) {
   return { toolCalls: calls.filter(Boolean), timings, usage };
 }
 
+function stripFakeImages(t) {
+  return String(t || '').replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\[([^\]]*)\]\(https?:[^)]*\)/g, '$1').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function parseToolArgs(raw) {
   try { return JSON.parse(raw || '{}'); } catch { }
   const m = /"prompt"\s*:\s*"((?:[^"\\]|\\.)*)/.exec(raw || '');
@@ -987,7 +1010,7 @@ async function generate() {
     live.phase = 'start';
     if (ctrl.signal.aborted) throw new DOMException('', 'AbortError');
     const base = { temperature: S.temperature, top_p: S.top_p, repeat_penalty: S.repeat_penalty, cache_prompt: true };
-    if (S.max_tokens > 0) base.max_tokens = S.max_tokens;
+    base.max_tokens = S.max_tokens > 0 ? S.max_tokens : Math.max(512, Math.min(4096, Math.floor((engine.ctx || 8192) / 2)));
     const onDelta = d => {
       if (d.reasoning_content) { msg.reasoning += d.reasoning_content; live.phase = 'think'; live.n++; }
       if (d.content) { msg.content += d.content; live.phase = 'write'; live.n++; }
@@ -1002,13 +1025,30 @@ async function generate() {
     res = null;
     if (withTools) {
       try {
-        res = await streamChat({
-          ...base, messages: buildApiMessages(true, msg), tools: [IMAGE_TOOL],
-          ...(wantsImage ? { tool_choice: 'required', chat_template_kwargs: { enable_thinking: false } } : {}),
-        }, ctrl.signal, onDelta, onChunk);
+        // asked for a picture but the model starts writing text instead of calling the tool:
+        // stop it right away and make the picture without it
+        const inner = new AbortController();
+        const relay = () => inner.abort();
+        ctrl.signal.addEventListener('abort', relay);
+        let sawCall = false, gaveUp = false;
+        const guard = d => {
+          if (d.tool_calls) sawCall = true;
+          if (wantsImage && !sawCall && d.content && d.content.trim()) { gaveUp = true; inner.abort(); return; }
+          onDelta(d);
+        };
+        try {
+          res = await streamChat({
+            ...base, messages: buildApiMessages(true, msg), tools: [IMAGE_TOOL],
+            ...(wantsImage ? { tool_choice: 'required', chat_template_kwargs: { enable_thinking: false } }
+            : clearlyNotImage(userMsg.content) ? { tool_choice: 'none' } : {}),
+          }, inner.signal, guard, onChunk);
+        } catch (e) {
+          if (!(gaveUp && e.name === 'AbortError')) throw e;
+          res = { toolCalls: [], timings: live.timings };
+        } finally { ctrl.signal.removeEventListener('abort', relay); }
       } catch (e) {
         // this model's chat template can't do tools: remember, and carry on without them
-        if (!e.status || e.status >= 500 || msg.content) throw e;
+        if (e.name === 'AbortError' || !e.status || e.status >= 500 || msg.content) throw e;
         toolsBroken.add(engine.model);
         withTools = false;
         msg.reasoning = ''; live.phase = 'start';
@@ -1036,13 +1076,15 @@ async function generate() {
           img.status = 'מנסח תיאור לתמונה…'; schedule();
           img.prompt = await toEnglishPrompt(img.prompt || userText, ctrl.signal, native ? '' : lastImagePrompt(target.messages.slice(0, -2)));
         }
+        if (HEB.test(img.prompt)) img.warn = 'מודל השיחה הנוכחי קטן מדי כדי לנסח תיאור באנגלית, ולכן התמונה עלולה לא להתאים לבקשה. עם מודל כמו Qwen3.5 או Gemma 4 זה יעבוד טוב.';
         await ensureImageEngine(img, schedule, ctrl.signal);
-        await runImageJob(img, p, ctrl.signal, schedule);
+        await runImageJob(img, p, ctrl.signal, schedule, () => persist(target, false));
       } catch (e) {
         if (e.name === 'AbortError') { img.error = 'היצירה בוטלה.'; throw e; }
         img.error = e.message === 'Failed to fetch' ? 'אין חיבור למנוע התמונות.' : e.message;
       }
       delete img.status; delete img.preview;
+      msg.content = stripFakeImages(msg.content);
       if (!native) {
         if (!splitThink(msg.content).text.trim()) msg.content = img.error ? '' : 'בשמחה! הנה התמונה:';
       } else {
@@ -1055,6 +1097,7 @@ async function generate() {
           if (d.content) { msg.after += d.content; schedule(); }
         });
       } catch (e) { if (e.name === 'AbortError') throw e; }
+      msg.after = stripFakeImages(msg.after);
       if (!msg.after.trim()) delete msg.after;
       }
     }
@@ -1110,7 +1153,7 @@ async function ensureImageEngine(img, update, signal) {
 }
 
 /** Runs one sd-server job and fills img.images / img.stats, updating img.status and img.preview while it works. */
-async function runImageJob(img, p, signal, update) {
+async function runImageJob(img, p, signal, update, onJob) {
   const t0 = performance.now();
   img.status = 'מתחיל…'; update();
   const job = await api('img/generate', {
@@ -1125,22 +1168,69 @@ async function runImageJob(img, p, signal, update) {
   });
   if (!job || !job.id) throw new Error((job && job.error && (job.error.message || job.error)) || 'שליחת הבקשה נכשלה');
   if (streaming) streaming.jobId = job.id;
+  // saved with the chat, so a refreshed page can pick the job up again
+  img.jobId = job.id; img.steps = p.steps; img.count = p.count;
+  if (onJob) onJob();
+  try {
+    await pollImageJob(img, job.id, signal, update);
+  } finally {
+    delete img.jobId; delete img.count;
+    if (streaming) streaming.jobId = null;
+  }
+  img.stats = `${((performance.now() - t0) / 1000).toFixed(0)} שנ' · ${img.size || p.size} · ${p.steps} צעדים`;
+  delete img.steps;
+}
+
+async function pollImageJob(img, id, signal, update) {
   for (; ;) {
     if (signal.aborted) throw new DOMException('', 'AbortError');
     await new Promise(r => setTimeout(r, 650));
-    const j = await api('img/job/' + job.id);
-    if (j.status === 'completed') { img.images = j.images || []; break; }
+    let j;
+    try { j = await api('img/job/' + id); } catch (e) { throw new Error('היצירה הופסקה (מנוע התמונות נסגר).'); }
+    if (!j || j.error && !j.status) throw new Error('היצירה הופסקה (מנוע התמונות נסגר).');
+    if (j.status === 'completed') { img.images = j.images || []; return; }
     if (j.status === 'failed') throw new Error((j.error && (j.error.message || j.error)) || 'היצירה נכשלה');
     if (j.status === 'cancelled') throw new DOMException('', 'AbortError');
-    if (j.status === 'queued') img.status = 'בתור…';
+    if (j.status === 'queued') img.status = 'ממתין בתור (מנוע התמונות עסוק בתמונה אחרת)…';
     else if (j.preview && j.preview.total_steps) {
-      img.status = `מצייר… צעד ${j.preview.step} מתוך ${j.preview.total_steps}` + (p.count > 1 ? ` · תמונה ${j.preview.pass}/${p.count}` : '');
+      const n = img.count || 1;
+      img.status = `מצייר… צעד ${j.preview.step} מתוך ${j.preview.total_steps}` + (n > 1 ? ` · תמונה ${j.preview.pass}/${n}` : '');
       if (j.preview.b64_json) img.preview = 'data:image/png;base64,' + j.preview.b64_json;
     } else img.status = 'מצייר…';
     update();
   }
-  if (streaming) streaming.jobId = null;
-  img.stats = `${((performance.now() - t0) / 1000).toFixed(0)} שנ' · ${p.size} · ${p.steps} צעדים`;
+}
+
+/** After a refresh: keep following a picture that is still being made in this chat. */
+async function resumeJobs(target) {
+  if (streaming || !target || !target.messages.length) return;
+  const m = target.messages[target.messages.length - 1];
+  const img = m.kind === 'image' ? m : m.image;
+  if (!img || !img.jobId || (img.images && img.images.length)) return;
+  const ctrl = new AbortController();
+  streaming = { ctrl, msg: m, jobId: img.jobId };
+  updateSendBtn();
+  const node = $('#messages').lastElementChild;
+  const body = node && $('.body', node);
+  const t0 = performance.now();
+  img.t0 = t0;
+  if (m.kind !== 'image') m.live = { phase: 'image', t0, n: 0 };
+  const paint = () => {
+    if (chat !== target || !body) return;
+    if (m.kind === 'image') fillImage(body, m, true); else fillAssistant(body, m, true);
+    scrollToEnd();
+  };
+  img.status = 'ממשיך לעקוב אחרי היצירה…'; paint();
+  try {
+    await pollImageJob(img, img.jobId, ctrl.signal, paint);
+  } catch (e) {
+    img.error = e.name === 'AbortError' ? 'היצירה בוטלה.' : e.message;
+  }
+  delete img.jobId; delete img.count; delete img.steps; delete img.status; delete img.preview; delete img.t0; delete m.live;
+  streaming = null;
+  updateSendBtn();
+  if (chat === target && body) { if (m.kind === 'image') fillImage(body, m, false); else fillAssistant(body, m, false); markLast(); }
+  persist(target);
 }
 
 function stopStreaming() {
@@ -1152,8 +1242,14 @@ function stopStreaming() {
 const HEB = /[֐-׿]/;
 
 /** Image models understand English: let the chat model rewrite a Hebrew request as an English prompt. */
+/** Models under ~1GB (SmolLM2 135M/360M…) invent text instead of translating. */
+function chatModelTooSmall() {
+  const info = models.find(x => x.file === engine.model);
+  return !!(info && info.size && info.size < 1e9);
+}
+
 async function toEnglishPrompt(text, signal, prev) {
-  if (engine.state !== 'ready' || (!prev && (!HEB.test(text) || !S.translate))) return text;
+  if (engine.state !== 'ready' || chatModelTooSmall() || (!prev && (!HEB.test(text) || !S.translate))) return text;
   const user = prev ? `Previous picture: ${prev}\nRequested change: ${text}` : text;
   const r = await fetch(`http://127.0.0.1:${engine.port}/v1/chat/completions`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
@@ -1217,12 +1313,13 @@ async function generateImage() {
     if (HEB.test(userMsg.content) && S.translate && engine.state === 'ready') { msg.status = 'מתרגם את התיאור…'; paint(); }
     msg.prompt = await toEnglishPrompt(userMsg.content, ctrl.signal);
     msg.t0 = performance.now();
-    if (HEB.test(msg.prompt)) msg.note = true;
-    await runImageJob(msg, p, ctrl.signal, paint);
+    if (HEB.test(msg.prompt)) msg.warn = engine.state === 'ready' && chatModelTooSmall()
+      ? 'מודל השיחה הנוכחי קטן מדי כדי לתרגם את התיאור לאנגלית, ומודלי תמונות מבינים בעיקר אנגלית. כתבו את התיאור באנגלית, או טענו מודל שיחה כמו Qwen3.5 או Gemma 4.'
+      : 'מודלי תמונות מבינים בעיקר אנגלית. טענו מודל שיחה (למשל Qwen3.5) כדי שהתיאור יתורגם אוטומטית, או כתבו אותו באנגלית.';
+    await runImageJob(msg, p, ctrl.signal, paint, () => persist(target, false));
   } catch (e) {
     msg.error = e.name === 'AbortError' ? 'היצירה בוטלה.' : (e.message === 'Failed to fetch' ? 'אין חיבור למנוע התמונות.' : e.message);
   }
-  if (msg.note && !msg.error) msg.error = 'שימו לב: מודלי תמונות מבינים בעיקר אנגלית. טענו מודל שיחה כדי שהתיאור יתורגם אוטומטית.';
   delete msg.preview; delete msg.status; delete msg.note; delete msg.t0;
   streaming = null;
   updateSendBtn();
@@ -1338,8 +1435,11 @@ async function init() {
   try { Object.assign(S, await api('settings') || {}); } catch { }
   applySettings();
   await refreshModels();
+  let last = null;
+  try { last = localStorage.getItem('lastChat'); } catch { }
   newChat();
   await Promise.all([refreshChats(), pollState()]);
+  if (last && chats.some(c => c.id === last)) openChat(last);
 }
 
 init();
