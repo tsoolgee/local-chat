@@ -49,7 +49,7 @@ const ICONS = {
 const DEFAULTS = {
   system: '', temperature: 0.7, top_p: 0.95, max_tokens: 0, repeat_penalty: 1.05,
   ctx: 8192, threads: 0, font: 15.5, enterSends: 1, theme: 'dark', sideHidden: false,
-  mode: 'chat', negative: '', cfg: 0, translate: 1, imgSize: 'auto', imgSteps: 0, imgCount: 1,
+  mode: 'chat', negative: '', cfg: 0, translate: 1, autoImages: 1, imgSize: 'auto', imgSteps: 0, imgCount: 1,
 };
 let S = { ...DEFAULTS };          // settings
 let engine = { state: 'idle' };   // /api/state
@@ -136,6 +136,7 @@ function openSettings() {
   $('#setNeg').value = S.negative || '';
   $('#setCfg').value = S.cfg;
   $('#setTranslate').value = String(S.translate);
+  $('#setAutoImg').value = String(S.autoImages);
   $('#setProxy').value = S.proxy || '';
   showModal('settings');
 }
@@ -178,6 +179,7 @@ async function submitSettings() {
     negative: $('#setNeg').value.trim(),
     cfg: Math.max(0, num($('#setCfg').value, 0)),
     translate: +$('#setTranslate').value,
+    autoImages: +$('#setAutoImg').value,
     proxy: $('#setProxy').value.trim(),
   };
   const engineChanged = patch.ctx !== S.ctx || patch.threads !== S.threads;
@@ -463,7 +465,7 @@ function renderWelcome() {
     ['הסבר לי', 'איך עובד מודל שפה, בפשטות'],
     ['כתוב לי', 'מכתב תודה קצר למורה'],
     ['עזור לי בקוד', 'פונקציית פייתון שממיינת רשימה של מילונים'],
-    ['תרגם', 'את המשפט "Knowledge is power" לעברית'],
+    imageToolAvailable() ? ['צייר לי', 'חתול ג\'ינג\'י ישן על אדן חלון בשקיעה'] : ['תרגם', 'את המשפט "Knowledge is power" לעברית'],
   ];
   w.innerHTML = `<img class="logo" src="/logo.png" alt=""><h1>${e.state === 'ready' ? (imgMode ? 'יצירת תמונות 🎨' : 'שלום! 👋') : 'צ\'אט מקומי'}</h1><p>${esc(sub)}</p>` +
     (e.state === 'error' ? `<div class="err-box" style="text-align:start;margin-bottom:16px">${esc(e.error || '')}</div>` : '') +
@@ -477,6 +479,7 @@ function renderMessages(scrollEnd) {
   if (chat) chat.messages.forEach((m, i) => box.append(buildMsg(m, i)));
   renderWelcome();
   markLast();
+  updateCtxMeter();
   if (scrollEnd !== false) scrollToEnd(true);
 }
 
@@ -514,12 +517,124 @@ function actBtn(icon, title, fn) {
   return b;
 }
 
+/* ================= image tool (chat → picture, in the same conversation) ================= */
+const IMAGE_TOOL = {
+  type: 'function',
+  function: {
+    name: 'generate_image',
+    description: 'Create a picture with the local image generator and show it to the user. Use it ONLY when the user asks to draw, create, generate, paint, design or show a picture, image, photo, illustration, drawing or logo (also when they ask to change a picture you made before). Never use it for normal questions.',
+    parameters: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: 'Detailed description of the picture IN ENGLISH (translate if the user wrote in another language): subject, details, setting, style, lighting, colors. When changing an earlier picture, repeat its full description with the change.' },
+        shape: { type: 'string', enum: ['square', 'portrait', 'landscape'], description: 'Picture shape. Default square.' },
+      },
+      required: ['prompt'],
+    },
+  },
+};
+const TOOL_HINT = 'You can create pictures. When the user asks you to draw, create or show an image, call the generate_image tool with a detailed English prompt, even if the user wrote in Hebrew. The picture is then shown to the user automatically, so do not explain how to draw it and do not invent links. Always answer the user in the language they wrote in.';
+
+/** The chat model gets the image tool when the user allows it and an image model exists. */
+function imageToolAvailable() {
+  return !!S.autoImages && imageModels.length > 0 && imgEngine().available !== false;
+}
+
+/* ================= live status (what the model is doing right now) ================= */
+const num = n => Math.round(n || 0).toLocaleString('en-US');
+const secs = ms => (ms / 1000).toFixed(ms < 10000 ? 1 : 0);
+
+function liveText(m) {
+  const L = m.live, t = L.timings || {};
+  const el2 = secs(performance.now() - L.t0) + ' שנ\'';
+  const speed = t.predicted_per_second ? ` · ${t.predicted_per_second.toFixed(1)} טוקנים לשנייה` : '';
+  const n = t.predicted_n || L.n;
+  switch (L.phase) {
+    case 'model': return `טוען את המודל לזיכרון… ${engine.progress || 0}%`;
+    case 'prompt': {
+      const p = L.pp || {};
+      if (!p.total) return `קורא את השיחה… · ${el2}`;
+      const pct = Math.min(100, Math.round(p.processed / p.total * 100));
+      return `קורא את השיחה… ${pct}% · ${num(p.processed)} מתוך ${num(p.total)} טוקנים` + (p.cache ? ` (${num(p.cache)} מהזיכרון)` : '') + ` · ${el2}`;
+    }
+    case 'think': return `חושב… ${num(n)} טוקנים${speed} · ${el2}`;
+    case 'write': return `כותב… ${num(n)} טוקנים${speed} · ${el2}`;
+    case 'tool': return `מכין תיאור לתמונה… · ${el2}`;
+    case 'image': return (m.image && m.image.status || 'מצייר…') + ` · ${el2}`;
+    case 'after': return `מסכם… · ${el2}`;
+    default: return `שולח למודל… · ${el2}`;
+  }
+}
+
+function updateLiveStatus(body, m) {
+  if (!m.live) return;
+  let st = $('.live-status', body);
+  if (!st) { st = el('div', 'live-status', '<span class="spin"></span><span class="t"></span>'); body.append(st); }
+  st.dataset.phase = m.live.phase;
+  $('.t', st).textContent = liveText(m);
+}
+
+/** Final numbers for a reply: a short line plus a detailed tooltip. */
+function statsFrom(t, wallMs) {
+  if (!t || !t.predicted_n) return null;
+  const lines = [
+    `קלט: ${num(t.prompt_n)} טוקנים חדשים` + (t.cache_n ? ` + ${num(t.cache_n)} מהזיכרון` : '') + (t.prompt_per_second ? `, ${t.prompt_per_second.toFixed(1)} טוקנים לשנייה` : ''),
+    `פלט: ${num(t.predicted_n)} טוקנים, ${t.predicted_per_second.toFixed(1)} טוקנים לשנייה`,
+    t.prompt_ms ? `זמן עד המילה הראשונה: ${secs(t.prompt_ms)} שנ'` : '',
+    `זמן כולל: ${secs(wallMs)} שנ'`,
+  ].filter(Boolean);
+  return {
+    stats: `${num(t.predicted_n)} טוקנים · ${t.predicted_per_second.toFixed(1)} לשנייה · ${secs(wallMs)} שנ'`,
+    title: lines.join('\n'),
+    ctx: (t.cache_n || 0) + (t.prompt_n || 0) + t.predicted_n,
+  };
+}
+
+/** How full the model's context window is, for the current chat. */
+function updateCtxMeter() {
+  const box = $('#ctxMeter');
+  if (!box) return;
+  const used = chat && chat.ctxUsed, total = engine.ctx;
+  if (!used || !total || S.mode === 'image') { box.classList.add('hidden'); return; }
+  const pct = Math.min(100, used / total * 100);
+  box.classList.remove('hidden');
+  box.classList.toggle('warn', pct > 75);
+  box.classList.toggle('full', pct > 92);
+  $('i', box).style.width = pct.toFixed(1) + '%';
+  $('.t', box).textContent = `הקשר: ${num(used)} מתוך ${num(total)} טוקנים`;
+  box.title = 'כמה מ"זיכרון השיחה" של המודל תפוס. כשהוא מתמלא, ההודעות הישנות נשכחות. אפשר להגדיל ב"גודל הקשר" בהגדרות, או לפתוח שיחה חדשה.';
+}
+
+function renderImageBlock(container, img, live) {
+  if (img.images && img.images.length) {
+    const g = el('div', 'gen-images' + (img.images.length === 1 ? ' one' : ''));
+    img.images.forEach(u => { const i = el('img'); i.src = u; i.loading = 'lazy'; i.onclick = () => openLightbox(u); g.append(i); });
+    container.append(g);
+  } else if (live && !img.error) {
+    const wbox = el('div', 'gen-wait');
+    const [w, h] = (img.size || '512x512').split('x').map(Number);
+    wbox.style.aspectRatio = w + ' / ' + h;
+    if (img.preview) { const i = el('img'); i.src = img.preview; wbox.append(i); }
+    wbox.append(el('div', 'shimmer'), el('div', 'gen-status', esc((img.status || 'מתחיל…') + (img.t0 ? ` · ${secs(performance.now() - img.t0)} שנ'` : ''))));
+    container.append(wbox);
+  }
+  if (img.error) container.append(el('div', 'err-box', esc(img.error)));
+  if (img.prompt) container.append(el('div', 'gen-prompt', esc(img.prompt)));
+}
+
+function imageActions(acts, img) {
+  (img.images || []).forEach((u, i) => {
+    const a = el('a', 'icon-btn', ICONS.download); a.href = u; a.download = 'image-' + (i + 1) + '.png'; a.title = 'הורדת התמונה';
+    acts.append(a);
+  });
+}
+
 function fillAssistant(body, m, live) {
   body.innerHTML = '';
   const { think, text, open } = splitThink(m.content, m.reasoning);
   if (think && think.trim()) {
     const d = el('details', 'think');
-    const thinking = live && (!text || open);
+    const thinking = live && !m.image && (!text || open);
     d.innerHTML = `<summary>${thinking ? 'חושב…' : 'מחשבות'}</summary><div class="think-body" dir="auto"></div>`;
     $('.think-body', d).textContent = think.trim();
     if (thinking) d.open = true;
@@ -527,45 +642,42 @@ function fillAssistant(body, m, live) {
   }
   const md = el('div', 'md');
   body.append(md);
-  if (m.error) {
-    if (text) renderMarkdown(md, text, false);
-    body.append(el('div', 'err-box', esc(m.error)));
-  } else if (live && !text && !(think && think.trim())) {
+  if (live && !m.live && !text && !(think && think.trim()) && !m.image && !m.error) {
     md.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
-  } else renderMarkdown(md, text, live && !!text);
+  } else if (text) renderMarkdown(md, text, live && !m.image && !!text);
+
+  if (m.image) {
+    const box = el('div', 'gen-inline');
+    renderImageBlock(box, m.image, live);
+    body.append(box);
+    if (m.after) {
+      const md2 = el('div', 'md');
+      renderMarkdown(md2, splitThink(m.after).text, live);
+      body.append(md2);
+    }
+  }
+  if (m.error) body.append(el('div', 'err-box', esc(m.error)));
+  if (live && m.live) updateLiveStatus(body, m);
 
   if (!live) {
     const acts = el('div', 'msg-actions');
-    acts.append(actBtn(ICONS.copy, 'העתקה', btn => copyText(text, btn)));
+    if (m.image) imageActions(acts, m.image);
+    const all = [text, m.after && splitThink(m.after).text].filter(Boolean).join('\n\n');
+    if (all) acts.append(actBtn(ICONS.copy, 'העתקה', btn => copyText(all, btn)));
     const idx = chat.messages.indexOf(m);
     if (idx === chat.messages.length - 1) acts.append(actBtn(ICONS.retry, 'תשובה חדשה', () => regenerate()));
-    if (m.stats) acts.append(el('span', 'stats', esc(m.stats)));
+    const stats = [m.stats, m.image && m.image.stats].filter(Boolean).join(' · ');
+    if (stats) { const sp = el('span', 'stats', esc(stats)); if (m.statsTitle) sp.title = m.statsTitle; acts.append(sp); }
     body.append(acts);
   }
 }
 
 function fillImage(body, m, live) {
   body.innerHTML = '';
-  if (m.images && m.images.length) {
-    const g = el('div', 'gen-images' + (m.images.length === 1 ? ' one' : ''));
-    m.images.forEach(u => { const i = el('img'); i.src = u; i.loading = 'lazy'; i.onclick = () => openLightbox(u); g.append(i); });
-    body.append(g);
-  } else if (live) {
-    const wbox = el('div', 'gen-wait');
-    const [w, h] = (m.size || '512x512').split('x').map(Number);
-    wbox.style.aspectRatio = w + ' / ' + h;
-    if (m.preview) { const i = el('img'); i.src = m.preview; wbox.append(i); }
-    wbox.append(el('div', 'shimmer'), el('div', 'gen-status', esc(m.status || 'מתחיל…')));
-    body.append(wbox);
-  }
-  if (m.error) body.append(el('div', 'err-box', esc(m.error)));
-  if (m.prompt) body.append(el('div', 'gen-prompt', esc(m.prompt)));
+  renderImageBlock(body, m, live);
   if (!live) {
     const acts = el('div', 'msg-actions');
-    (m.images || []).forEach((u, i) => {
-      const a = el('a', 'icon-btn', ICONS.download); a.href = u; a.download = 'image-' + (i + 1) + '.png'; a.title = 'הורדה';
-      acts.append(a);
-    });
+    imageActions(acts, m);
     if (m.prompt) acts.append(actBtn(ICONS.copy, 'העתקת התיאור', btn => copyText(m.prompt, btn)));
     const idx = chat.messages.indexOf(m);
     if (idx === chat.messages.length - 1) acts.append(actBtn(ICONS.retry, 'תמונה חדשה', () => regenerate()));
@@ -679,28 +791,53 @@ function regenerate() {
 
 function estimateTokens(m) {
   // Hebrew tokenizes poorly in most models: be conservative.
-  const c = typeof m.content === 'string' ? m.content : '';
-  return Math.ceil(c.length / 2.6) + 8 + (m.images ? m.images.length * 700 : 0);
+  const c = (typeof m.content === 'string' ? m.content : '') + (m.after || '') + ((m.image && m.image.prompt) || m.prompt || '');
+  return Math.ceil(c.length / 2.6) + 8 + (m.images && m.role === 'user' ? m.images.length * 700 : 0);
 }
 
-function buildApiMessages() {
+/** One stored message → the API messages that represent it. Pictures become a tool call + its result. */
+function toApi(m, idx, withTools) {
+  if (m.role === 'user') {
+    let content = m.content;
+    if (m.images && m.images.length && engine.vision) {
+      content = [{ type: 'text', text: m.content || '' }, ...m.images.map(u => ({ type: 'image_url', image_url: { url: u } }))];
+    }
+    return [{ role: 'user', content }];
+  }
+  const img = m.kind === 'image' ? m : m.image;
+  const text = m.kind === 'image' ? '' : splitThink(m.content, m.reasoning).text;
+  if (!img) return text ? [{ role: 'assistant', content: text }] : [];
+  const prompt = img.prompt || '';
+  const ok = img.images && img.images.length;
+  const after = m.after ? splitThink(m.after).text : '';
+  if (!withTools) {
+    const note = ok ? `[יצרתי תמונה לפי התיאור: ${prompt}]` : '[ניסיתי ליצור תמונה ולא הצלחתי]';
+    return [{ role: 'assistant', content: [text, note, after].filter(Boolean).join('\n') }];
+  }
+  const id = (m.tool && m.tool.id) || 'call_' + idx;
+  const out = [
+    { role: 'assistant', content: text || '', tool_calls: [{ id, type: 'function', function: { name: 'generate_image', arguments: JSON.stringify({ prompt }) } }] },
+    { role: 'tool', tool_call_id: id, content: ok ? 'The picture was created and is now shown to the user.' : 'The picture could not be created: ' + (img.error || 'unknown error') },
+  ];
+  if (after) out.push({ role: 'assistant', content: after });
+  return out;
+}
+
+function buildApiMessages(withTools, exclude) {
   const reserve = S.max_tokens > 0 ? Math.min(S.max_tokens, engine.ctx / 2) : Math.min(2048, engine.ctx / 3);
   let budget = (engine.ctx || S.ctx) - reserve;
   const out = [];
-  const src = chat.messages.filter(m => m.kind !== 'image' && !(m.role === 'assistant' && (m.error && !m.content)));
+  const src = chat.messages.filter(m => m !== exclude && !(m.role === 'assistant' && m.error && !m.content && !m.image));
   for (let i = src.length - 1; i >= 0; i--) {
     const m = src[i];
     const cost = estimateTokens(m);
     if (cost > budget && out.length) break;
     budget -= cost;
-    let content = m.role === 'assistant' ? splitThink(m.content, m.reasoning).text : m.content;
-    if (m.images && m.images.length && engine.vision) {
-      content = [{ type: 'text', text: m.content || '' }, ...m.images.map(u => ({ type: 'image_url', image_url: { url: u } }))];
-    }
-    out.unshift({ role: m.role, content });
+    out.unshift(...toApi(m, i, withTools));
   }
-  while (out.length && out[0].role === 'assistant') out.shift();
-  if (S.system) out.unshift({ role: 'system', content: S.system });
+  while (out.length && out[0].role !== 'user') out.shift();
+  const sys = [S.system, withTools ? TOOL_HINT : ''].filter(Boolean).join('\n\n');
+  if (sys) out.unshift({ role: 'system', content: sys });
   return out;
 }
 
@@ -714,9 +851,63 @@ async function waitReady() {
   return engine.state === 'ready';
 }
 
+/** Streams one chat completion. Calls onDelta for every delta; returns tool calls and timings. */
+async function streamChat(payload, signal, onDelta, onChunk) {
+  const r = await fetch(`http://127.0.0.1:${engine.port}/v1/chat/completions`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...payload, stream: true, stream_options: { include_usage: true }, return_progress: true, timings_per_token: true }), signal,
+  });
+  if (!r.ok) {
+    let t = await r.text(), m = t;
+    try { const j = JSON.parse(t); m = (j.error && (j.error.message || j.error)) || t; } catch { }
+    if (/context|exceed/i.test(m)) m = 'השיחה ארוכה מדי לגודל ההקשר של המודל. פתחו שיחה חדשה או הגדילו את "גודל ההקשר" בהגדרות.\n\n' + m;
+    const err = new Error(m); err.status = r.status; throw err;
+  }
+  const reader = r.body.getReader();
+  const dec = new TextDecoder();
+  const calls = [];
+  let buf = '', timings = null, usage = null;
+  for (; ;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+      if (!line.startsWith('data:')) continue;
+      const data = line.slice(5).trim();
+      if (data === '[DONE]') continue;
+      let j; try { j = JSON.parse(data); } catch { continue; }
+      if (j.error) throw new Error(j.error.message || JSON.stringify(j.error));
+      if (onChunk) onChunk(j);
+      const d = j.choices && j.choices[0] && j.choices[0].delta;
+      if (d) {
+        for (const tc of d.tool_calls || []) {
+          const k = tc.index || 0;
+          const t = calls[k] || (calls[k] = { id: '', function: { name: '', arguments: '' } });
+          if (tc.id) t.id = tc.id;
+          if (tc.function && tc.function.name) t.function.name += tc.function.name;
+          if (tc.function && tc.function.arguments) t.function.arguments += tc.function.arguments;
+        }
+        onDelta(d);
+      }
+      if (j.timings) timings = j.timings;
+      if (j.usage) usage = j.usage;
+    }
+  }
+  return { toolCalls: calls.filter(Boolean), timings, usage };
+}
+
+function parseToolArgs(raw) {
+  try { return JSON.parse(raw || '{}'); } catch { }
+  const m = /"prompt"\s*:\s*"((?:[^"\\]|\\.)*)/.exec(raw || '');
+  return m ? { prompt: m[1].replace(/\\"/g, '"') } : {};
+}
+
 async function generate() {
   const target = chat;
   const msg = { role: 'assistant', content: '', reasoning: '' };
+  const live = msg.live = { phase: 'start', t0: performance.now(), n: 0 };
   target.messages.push(msg);
   const ctrl = new AbortController();
   streaming = { ctrl, msg };
@@ -732,54 +923,68 @@ async function generate() {
   const paint = () => { raf = 0; if (chat === target) { fillAssistant(body, msg, true); scrollToEnd(); } };
   const schedule = () => { if (!raf) raf = requestAnimationFrame(paint); };
   const t0 = performance.now();
-  let timings = null, usage = null;
+  let res = null;
+  // the clock and counters keep moving even when no text arrives (long prompts, slow machines)
+  const ticker = setInterval(() => { if (chat === target && msg.live) updateLiveStatus(body, msg); }, 500);
+  const onChunk = j => {
+    if (j.prompt_progress) { live.pp = j.prompt_progress; if (live.phase === 'start' || live.phase === 'prompt') live.phase = 'prompt'; }
+    if (j.timings) live.timings = j.timings;
+  };
 
   try {
+    if (engine.state === 'loading') { live.phase = 'model'; schedule(); }
     if (!(await waitReady())) throw new Error(engine.error || 'המודל אינו מוכן.');
+    live.phase = 'start';
     if (ctrl.signal.aborted) throw new DOMException('', 'AbortError');
-    const payload = {
-      messages: buildApiMessages(),
-      stream: true,
-      temperature: S.temperature,
-      top_p: S.top_p,
-      repeat_penalty: S.repeat_penalty,
-      cache_prompt: true,
-      stream_options: { include_usage: true },
+    const base = { temperature: S.temperature, top_p: S.top_p, repeat_penalty: S.repeat_penalty, cache_prompt: true };
+    if (S.max_tokens > 0) base.max_tokens = S.max_tokens;
+    const onDelta = d => {
+      if (d.reasoning_content) { msg.reasoning += d.reasoning_content; live.phase = 'think'; live.n++; }
+      if (d.content) { msg.content += d.content; live.phase = 'write'; live.n++; }
+      if (d.tool_calls) live.phase = 'tool';
+      schedule();
     };
-    if (S.max_tokens > 0) payload.max_tokens = S.max_tokens;
-    const r = await fetch(`http://127.0.0.1:${engine.port}/v1/chat/completions`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: ctrl.signal,
-    });
-    if (!r.ok) {
-      let t = await r.text(), m = t;
-      try { const j = JSON.parse(t); m = (j.error && (j.error.message || j.error)) || t; } catch { }
-      if (/context|exceed/i.test(m)) m = 'השיחה ארוכה מדי לגודל ההקשר של המודל. פתחו שיחה חדשה או הגדילו את "גודל ההקשר" בהגדרות.\n\n' + m;
-      throw new Error(m);
+    let withTools = imageToolAvailable();
+    let messages = buildApiMessages(withTools, msg);
+    try {
+      res = await streamChat({ ...base, messages, ...(withTools ? { tools: [IMAGE_TOOL] } : {}) }, ctrl.signal, onDelta, onChunk);
+    } catch (e) {
+      // some chat templates can't do tools: retry once without them
+      if (!withTools || !e.status || e.status >= 500 || msg.content) throw e;
+      withTools = false;
+      msg.reasoning = '';
+      messages = buildApiMessages(false, msg);
+      res = await streamChat({ ...base, messages }, ctrl.signal, onDelta, onChunk);
     }
-    const reader = r.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-    for (; ;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      let nl;
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
-        if (!line.startsWith('data:')) continue;
-        const data = line.slice(5).trim();
-        if (data === '[DONE]') continue;
-        let j; try { j = JSON.parse(data); } catch { continue; }
-        if (j.error) throw new Error(j.error.message || JSON.stringify(j.error));
-        const d = j.choices && j.choices[0] && j.choices[0].delta;
-        if (d) {
-          if (d.reasoning_content) msg.reasoning += d.reasoning_content;
-          if (d.content) msg.content += d.content;
-          schedule();
-        }
-        if (j.timings) timings = j.timings;
-        if (j.usage) usage = j.usage;
+
+    const call = res.toolCalls.find(c => c.function.name === 'generate_image');
+    if (call) {
+      const userText = (target.messages[target.messages.indexOf(msg) - 1] || {}).content || '';
+      const args = parseToolArgs(call.function.arguments);
+      const p = imageParams(args.shape);
+      const img = msg.image = { prompt: String(args.prompt || '').trim(), size: p.size, status: 'מכין…', images: [] };
+      live.phase = 'image';
+      msg.tool = { id: call.id || 'call_' + uid() };
+      schedule();
+      try {
+        if (!img.prompt || HEB.test(img.prompt)) img.prompt = await toEnglishPrompt(img.prompt || userText, ctrl.signal);
+        await ensureImageEngine(img, schedule, ctrl.signal);
+        await runImageJob(img, p, ctrl.signal, schedule);
+      } catch (e) {
+        if (e.name === 'AbortError') { img.error = 'היצירה בוטלה.'; throw e; }
+        img.error = e.message === 'Failed to fetch' ? 'אין חיבור למנוע התמונות.' : e.message;
       }
+      delete img.status; delete img.preview;
+      // a short reply after the picture, like a person would add
+      msg.after = '';
+      live.phase = 'after';
+      const follow = buildApiMessages(true, null);
+      try {
+        await streamChat({ ...base, messages: follow, max_tokens: 160, chat_template_kwargs: { enable_thinking: false } }, ctrl.signal, d => {
+          if (d.content) { msg.after += d.content; schedule(); }
+        });
+      } catch (e) { if (e.name === 'AbortError') throw e; }
+      if (!msg.after.trim()) delete msg.after;
     }
   } catch (e) {
     if (e.name !== 'AbortError') {
@@ -787,17 +992,83 @@ async function generate() {
     }
   }
   if (raf) cancelAnimationFrame(raf);
-  if (timings && timings.predicted_per_second) {
-    msg.stats = `${timings.predicted_per_second.toFixed(1)} טוקנים/שנ' · ${timings.predicted_n} טוקנים`;
+  clearInterval(ticker);
+  delete msg.live;
+  const timings = (res && res.timings) || live.timings, usage = res && res.usage;
+  const st = statsFrom(timings, performance.now() - t0);
+  if (st) {
+    msg.stats = st.stats; msg.statsTitle = st.title;
+    target.ctxUsed = st.ctx;
   } else if (usage && usage.completion_tokens) {
-    msg.stats = `${usage.completion_tokens} טוקנים · ${((performance.now() - t0) / 1000).toFixed(1)} שנ'`;
+    msg.stats = `${num(usage.completion_tokens)} טוקנים · ${secs(performance.now() - t0)} שנ'`;
+    target.ctxUsed = usage.total_tokens || target.ctxUsed;
   }
+  if (chat === target) updateCtxMeter();
+  if (msg.image) { delete msg.image.status; delete msg.image.preview; }
   if (!msg.reasoning) delete msg.reasoning;
-  if (!msg.content && !msg.reasoning && !msg.error) msg.error = 'התשובה נעצרה.';
+  if (!msg.content && !msg.reasoning && !msg.error && !msg.image) msg.error = 'התשובה נעצרה.';
   streaming = null;
   updateSendBtn();
   if (chat === target) { fillAssistant(body, msg, false); markLast(); scrollToEnd(); }
   persist(target);
+}
+
+/** Makes sure an image model is loaded, loading the last used (or a fast) one if needed. */
+async function ensureImageEngine(img, update, signal) {
+  let ie = imgEngine();
+  if (ie.state === 'ready') return;
+  if (ie.state !== 'loading') {
+    const want = imageModels.find(m => m.file === S.lastImageModel)
+      || imageModels.find(m => /sd[-_ ]?turbo/i.test(m.name + m.file))
+      || imageModels.find(m => m.fast) || imageModels[0];
+    if (!want) throw new Error('אין מודל תמונות. אפשר להוריד אחד בחלון "הורדת מודלים".');
+    await api('image-load', { method: 'POST', body: { file: want.file, threads: S.threads } });
+    S.lastImageModel = want.file;
+  }
+  img.status = 'טוען את מודל התמונות…'; update();
+  for (; ;) {
+    if (signal.aborted) throw new DOMException('', 'AbortError');
+    await new Promise(r => setTimeout(r, 800));
+    try { engine = await api('state'); } catch { continue; }
+    ie = imgEngine();
+    if (ie.state === 'ready') break;
+    if (ie.state === 'error' || ie.state === 'idle') throw new Error('טעינת מודל התמונות נכשלה: ' + (ie.error || ''));
+  }
+  renderEngine();
+}
+
+/** Runs one sd-server job and fills img.images / img.stats, updating img.status and img.preview while it works. */
+async function runImageJob(img, p, signal, update) {
+  const t0 = performance.now();
+  img.status = 'מתחיל…'; update();
+  const job = await api('img/generate', {
+    method: 'POST', body: {
+      prompt: img.prompt, negative_prompt: S.negative || '',
+      width: p.width, height: p.height, seed: -1, batch_count: p.count,
+      sample_params: { sample_steps: p.steps, guidance: { txt_cfg: p.cfg } },
+      vae_tiling_params: { enabled: p.width * p.height > 768 * 768 },
+      preview: 'proj', preview_interval: 1,
+      output_format: 'png',
+    },
+  });
+  if (!job || !job.id) throw new Error((job && job.error && (job.error.message || job.error)) || 'שליחת הבקשה נכשלה');
+  if (streaming) streaming.jobId = job.id;
+  for (; ;) {
+    if (signal.aborted) throw new DOMException('', 'AbortError');
+    await new Promise(r => setTimeout(r, 650));
+    const j = await api('img/job/' + job.id);
+    if (j.status === 'completed') { img.images = j.images || []; break; }
+    if (j.status === 'failed') throw new Error((j.error && (j.error.message || j.error)) || 'היצירה נכשלה');
+    if (j.status === 'cancelled') throw new DOMException('', 'AbortError');
+    if (j.status === 'queued') img.status = 'בתור…';
+    else if (j.preview && j.preview.total_steps) {
+      img.status = `מצייר… צעד ${j.preview.step} מתוך ${j.preview.total_steps}` + (p.count > 1 ? ` · תמונה ${j.preview.pass}/${p.count}` : '');
+      if (j.preview.b64_json) img.preview = 'data:image/png;base64,' + j.preview.b64_json;
+    } else img.status = 'מצייר…';
+    update();
+  }
+  if (streaming) streaming.jobId = null;
+  img.stats = `${((performance.now() - t0) / 1000).toFixed(0)} שנ' · ${p.size} · ${p.steps} צעדים`;
 }
 
 function stopStreaming() {
@@ -829,7 +1100,7 @@ async function toEnglishPrompt(text, signal) {
   return out && !HEB.test(out) ? out : text;
 }
 
-function imageParams() {
+function imageParams(shape) {
   const ie = imgEngine();
   const info = imageModels.find(x => x.file === ie.model) || {};
   const id = ((info.name || '') + ' ' + (info.file || '')).toLowerCase();
@@ -840,11 +1111,17 @@ function imageParams() {
   else if (info.fast) def = [info.xl ? '1024x1024' : '512x512', 4, 1];          // lightning / lcm / schnell / hyper
   else def = [info.xl ? '1024x1024' : '512x512', info.xl ? 25 : 20, 7];
   let size = S.imgSize;
-  if (size === 'auto') size = def[0];
+  if (size === 'auto') {
+    size = def[0];
+    // the chat model may ask for a tall or wide picture
+    const big = +size.split('x')[0] >= 1024, mid = +size.split('x')[0] >= 768;
+    if (shape === 'portrait') size = big ? '832x1216' : mid ? '576x832' : '512x768';
+    if (shape === 'landscape') size = big ? '1216x832' : mid ? '832x576' : '768x512';
+  }
   const [width, height] = size.split('x').map(Number);
   const steps = +S.imgSteps || def[1];
   const cfg = +S.cfg || def[2];
-  return { width, height, steps, cfg, size, count: +S.imgCount || 1 };
+  return { width, height, steps, cfg, size, count: shape === undefined ? (+S.imgCount || 1) : 1 };
 }
 
 async function generateImage() {
@@ -862,46 +1139,18 @@ async function generateImage() {
   const paint = () => { if (chat === target) { fillImage(body, msg, true); scrollToEnd(); } };
   paint();
   stick = true; scrollToEnd(true);
-  const t0 = performance.now();
 
   try {
     if (HEB.test(userMsg.content) && S.translate && engine.state === 'ready') { msg.status = 'מתרגם את התיאור…'; paint(); }
-    const prompt = await toEnglishPrompt(userMsg.content, ctrl.signal);
-    msg.prompt = prompt;
-    if (HEB.test(prompt)) msg.note = true;
-    msg.status = 'מתחיל…'; paint();
-    const job = await api('img/generate', {
-      method: 'POST', body: {
-        prompt, negative_prompt: S.negative || '',
-        width: p.width, height: p.height, seed: -1, batch_count: p.count,
-        sample_params: { sample_steps: p.steps, guidance: { txt_cfg: p.cfg } },
-        vae_tiling_params: { enabled: p.width * p.height > 768 * 768 },
-        preview: 'proj', preview_interval: 1,
-        output_format: 'png',
-      },
-    });
-    if (!job || !job.id) throw new Error((job && job.error && (job.error.message || job.error)) || 'שליחת הבקשה נכשלה');
-    streaming.jobId = job.id;
-    for (; ;) {
-      if (ctrl.signal.aborted) throw new DOMException('', 'AbortError');
-      await new Promise(r => setTimeout(r, 650));
-      const j = await api('img/job/' + job.id);
-      if (j.status === 'completed') { msg.images = j.images || []; break; }
-      if (j.status === 'failed') throw new Error((j.error && (j.error.message || j.error)) || 'היצירה נכשלה');
-      if (j.status === 'cancelled') throw new DOMException('', 'AbortError');
-      if (j.status === 'queued') msg.status = 'בתור…';
-      else if (j.preview && j.preview.total_steps) {
-        msg.status = `צעד ${j.preview.step} מתוך ${j.preview.total_steps}` + (p.count > 1 ? ` · תמונה ${j.preview.pass}/${p.count}` : '');
-        if (j.preview.b64_json) msg.preview = 'data:image/png;base64,' + j.preview.b64_json;
-      } else msg.status = 'יוצר…';
-      paint();
-    }
-    msg.stats = `${((performance.now() - t0) / 1000).toFixed(0)} שנ' · ${p.size} · ${p.steps} צעדים`;
+    msg.prompt = await toEnglishPrompt(userMsg.content, ctrl.signal);
+    msg.t0 = performance.now();
+    if (HEB.test(msg.prompt)) msg.note = true;
+    await runImageJob(msg, p, ctrl.signal, paint);
   } catch (e) {
     msg.error = e.name === 'AbortError' ? 'היצירה בוטלה.' : (e.message === 'Failed to fetch' ? 'אין חיבור למנוע התמונות.' : e.message);
   }
   if (msg.note && !msg.error) msg.error = 'שימו לב: מודלי תמונות מבינים בעיקר אנגלית. טענו מודל שיחה כדי שהתיאור יתורגם אוטומטית.';
-  delete msg.preview; delete msg.status; delete msg.note;
+  delete msg.preview; delete msg.status; delete msg.note; delete msg.t0;
   streaming = null;
   updateSendBtn();
   if (chat === target) { fillImage(body, msg, false); markLast(); scrollToEnd(); }

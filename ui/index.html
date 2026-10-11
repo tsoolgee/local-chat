@@ -121,7 +121,10 @@
           </label>
         </div>
       </div>
-      <div class="hint">המודל רץ אצלכם במחשב, בלי אינטרנט. הוא יכול לטעות.</div>
+      <div class="hint">
+        <span id="ctxMeter" class="ctx-meter hidden"><span class="bar"><i></i></span><span class="t"></span></span>
+        <span>המודל רץ אצלכם במחשב, בלי אינטרנט. הוא יכול לטעות.</span>
+      </div>
     </footer>
   </main>
 </div>
@@ -180,6 +183,13 @@
         <input type="text" id="setProxy" dir="ltr" placeholder="http://127.0.0.1:10809">
       </label>
       <h3>תמונות</h3>
+      <label class="field">
+        <span>יצירת תמונות מתוך השיחה</span>
+        <select id="setAutoImg">
+          <option value="1">כן: כשמבקשים תמונה, מודל השיחה יוצר אותה לבד</option>
+          <option value="0">לא: רק בכפתור מצב התמונות</option>
+        </select>
+      </label>
       <label class="field">
         <span>מה לא להציג בתמונה (negative prompt, באנגלית)</span>
         <input type="text" id="setNeg" dir="ltr" placeholder="blurry, low quality, watermark, text">
