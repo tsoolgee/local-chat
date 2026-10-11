@@ -511,14 +511,14 @@ namespace LocalChat
             void Save()
             {
                 var pkg = svc.Package;
-                if (pkg?.Chunks == null || pkg.Chunks.Length == 0) return;
-                if (!pkg.IsSupportDownloadInRange) return;
+                if (pkg?.Chunks == null || pkg.Chunks.Length == 0) { Log.Write("save skipped: no chunks"); return; }
+                if (!pkg.IsSupportDownloadInRange) { Log.Write("save skipped: no range support"); return; }
                 var snap = pkg.Chunks.Select(x => new[] { x.Start, x.End, x.Position }).ToList();
                 // never go backwards: when stopping, the library may already have reset its chunks
                 if (st.Chunks != null && snap.Sum(x => x[2]) < st.Chunks.Sum(x => x[2])) return;
                 try { pkg.Flush(); } catch { }        // bytes on disk before positions are recorded
                 st.Chunks = snap;
-                try { WriteState(f.Dest, st); } catch { }
+                try { WriteState(f.Dest, st); Log.Write("saved " + snap.Count + " chunks, " + snap.Sum(x => x[2]) / 1048576 + "MB"); } catch (Exception ex) { Log.Write("save failed: " + ex.Message); }
             }
             while (!task.IsCompleted && !finished)
             {

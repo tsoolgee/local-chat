@@ -32,4 +32,4 @@ jobs:
       - name: Log
         if: always()
         shell: pwsh
-        run: Get-Content (Join-Path $env:ROOT 'נתונים\log.txt') -ErrorAction SilentlyContinue | Select -Last 40
+        run: Get-Content (Join-Path $env:ROOT 'נתונים\log.txt') -ErrorAction SilentlyContinue | Select -Last 80
