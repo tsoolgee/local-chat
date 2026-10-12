@@ -13,7 +13,7 @@ namespace LocalChat
     /// Downloads model files into the models folder, with resume (.part files), retries and progress.
     static class Downloader
     {
-        class FileItem { public string Url, Dest; public long Size; }
+        class FileItem { public string Url, Dest, Sha256; public long Size; }
 
         class Job
         {
@@ -21,6 +21,7 @@ namespace LocalChat
             public List<FileItem> Files = new List<FileItem>();
             public long Total, Done, Current;
             public int Connections;
+            public double Verify = -1;   // 0..1 while checking the finished file
             public double Speed;
             public volatile bool Cancel;
         }
@@ -132,7 +133,11 @@ namespace LocalChat
             foreach (Dictionary<string, object> f in (ArrayList)m["files"])
             {
                 if (f.ContainsKey("optional") && !withOptional) continue;
-                job.Files.Add(new FileItem { Url = f["url"] as string, Dest = Path.Combine(dir, SafeName(f["name"] as string)), Size = Convert.ToInt64(f["size"]) });
+                job.Files.Add(new FileItem
+                {
+                    Url = f["url"] as string, Dest = Path.Combine(dir, SafeName(f["name"] as string)), Size = Convert.ToInt64(f["size"]),
+                    Sha256 = f.TryGetValue("sha256", out var h) ? h as string : null,
+                });
             }
             return Start(job);
         }
@@ -290,7 +295,7 @@ namespace LocalChat
                 list = Jobs.Values.Select(j => new Dictionary<string, object>
                 {
                     ["id"] = j.Id, ["name"] = j.Name, ["kind"] = j.Kind, ["state"] = j.State, ["error"] = j.Error,
-                    ["total"] = j.Total, ["done"] = j.Done + j.Current, ["speed"] = j.Speed, ["connections"] = j.Connections,
+                    ["total"] = j.Total, ["done"] = j.Done + j.Current, ["speed"] = j.Speed, ["connections"] = j.Connections, ["verify"] = j.Verify,
                     ["path"] = j.Files.Count > 0 ? j.Files[0].Dest.Substring(Program.ModelsDir.Length).TrimStart('\\') : null,
                 }).ToList();
                 busy = new HashSet<string>(Jobs.Values.SelectMany(j => j.Files.Select(f => f.Dest)), StringComparer.OrdinalIgnoreCase);
@@ -337,6 +342,7 @@ namespace LocalChat
                 {
                     if (File.Exists(f.Dest) && (f.Size <= 0 || new FileInfo(f.Dest).Length == f.Size)) { job.Done += new FileInfo(f.Dest).Length; continue; }
                     DownloadFile(job, f);
+                    if (!string.IsNullOrEmpty(f.Sha256)) VerifyFile(job, f);
                     job.Done += f.Size;
                     job.Current = 0;
                 }
@@ -351,6 +357,39 @@ namespace LocalChat
                 Log.Write("Download " + job.Name + " failed: " + ex.Message);
             }
             job.Speed = 0;
+        }
+
+        /// Compares the finished file with the hash published for it; a damaged file is deleted so it is never loaded.
+        static void VerifyFile(Job job, FileItem f)
+        {
+            job.Verify = 0; job.Speed = 0;
+            try
+            {
+                using (var sha = System.Security.Cryptography.SHA256.Create())
+                using (var fs = new FileStream(f.Dest, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20))
+                {
+                    var buf = new byte[4 << 20];
+                    long read = 0, len = fs.Length;
+                    int n;
+                    while ((n = fs.Read(buf, 0, buf.Length)) > 0)
+                    {
+                        if (job.Cancel) throw new OperationCanceledException();
+                        sha.TransformBlock(buf, 0, n, null, 0);
+                        read += n;
+                        job.Verify = len > 0 ? (double)read / len : 1;
+                    }
+                    sha.TransformFinalBlock(buf, 0, 0);
+                    var hex = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
+                    if (hex != f.Sha256.ToLowerInvariant())
+                    {
+                        fs.Dispose();
+                        File.Delete(f.Dest);
+                        Log.Write($"Hash mismatch for {f.Dest}: {hex}");
+                        throw new Exception("הקובץ שירד פגום (בדיקת התקינות נכשלה) ולכן נמחק. אפשר ללחוץ שוב על הורדה.");
+                    }
+                }
+            }
+            finally { job.Verify = -1; }
         }
 
         static HttpWebRequest NewRequest(string url)

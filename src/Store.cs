@@ -75,6 +75,38 @@ namespace LocalChat
             }
         }
 
+        /// Chats whose messages contain the text (case-insensitive), with a short snippet around the first hit.
+        public string Search(string q)
+        {
+            var hits = new List<Dictionary<string, object>>();
+            q = (q ?? "").Trim();
+            if (q.Length < 2) return Json.Serialize(hits);
+            foreach (var f in Directory.EnumerateFiles(_chats, "*.json"))
+            {
+                var id = Path.GetFileNameWithoutExtension(f);
+                if (id == "index" || !ValidId(id)) continue;
+                try
+                {
+                    var d = Json.Deserialize<Dictionary<string, object>>(File.ReadAllText(f, Encoding.UTF8));
+                    if (!(d.TryGetValue("messages", out var ms) && ms is System.Collections.ArrayList list)) continue;
+                    foreach (Dictionary<string, object> m in list)
+                    {
+                        var text = (m.TryGetValue("content", out var c) ? c as string : null) ?? "";
+                        if (m.TryGetValue("after", out var af) && af is string a2) text += "\n" + a2;
+                        var at = text.IndexOf(q, StringComparison.OrdinalIgnoreCase);
+                        if (at < 0) continue;
+                        int from = Math.Max(0, at - 40), to = Math.Min(text.Length, at + q.Length + 60);
+                        var snip = (from > 0 ? "…" : "") + text.Substring(from, to - from).Replace('\n', ' ') + (to < text.Length ? "…" : "");
+                        hits.Add(new Dictionary<string, object> { ["id"] = id, ["snippet"] = snip });
+                        break;
+                    }
+                }
+                catch { }
+                if (hits.Count >= 100) break;
+            }
+            return Json.Serialize(hits);
+        }
+
         public void DeleteChat(string id)
         {
             lock (_lock)

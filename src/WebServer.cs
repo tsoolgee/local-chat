@@ -78,6 +78,14 @@ namespace LocalChat
                 return;
             }
             if (route == "image-models") { SendJson(res, Engine.ListImageModels()); return; }
+            if (route == "extract-docx" && method == "POST")
+            {
+                var ms = new MemoryStream();
+                ctx.Request.InputStream.CopyTo(ms);
+                ms.Position = 0;
+                SendJson(res, new Dictionary<string, object> { ["text"] = Documents.DocxText(ms) });
+                return;
+            }
             if (route == "update") { SendText(res, Downloader.UpdateInfo(), "application/json; charset=utf-8"); return; }
             if (route == "catalog") { SendText(res, Downloader.CatalogWithStatus(), "application/json; charset=utf-8"); return; }
             if (route == "downloads") { SendText(res, Downloader.Status(), "application/json; charset=utf-8"); return; }
@@ -186,6 +194,7 @@ namespace LocalChat
                 else SendText(res, store.ReadSettings(), "application/json; charset=utf-8");
                 return;
             }
+            if (route == "search") { SendText(res, store.Search(QueryParam(ctx.Request.Url, "q")), "application/json; charset=utf-8"); return; }
             if (route == "chats") { SendText(res, store.ListChats(), "application/json; charset=utf-8"); return; }
             if (route.StartsWith("chats/"))
             {
@@ -212,6 +221,7 @@ namespace LocalChat
         {
             [".html"] = "text/html; charset=utf-8",
             [".js"] = "text/javascript; charset=utf-8",
+            [".mjs"] = "text/javascript; charset=utf-8",
             [".css"] = "text/css; charset=utf-8",
             [".svg"] = "image/svg+xml",
             [".png"] = "image/png",
@@ -282,6 +292,17 @@ namespace LocalChat
             res.ContentLength64 = b.Length;
             res.OutputStream.Write(b, 0, b.Length);
             res.Close();
+        }
+
+        /// A query-string value decoded as UTF-8 (HttpListener would use the system code page).
+        static string QueryParam(Uri url, string name)
+        {
+            foreach (var part in url.Query.TrimStart('?').Split('&'))
+            {
+                var kv = part.Split(new[] { '=' }, 2);
+                if (kv.Length == 2 && kv[0] == name) return Uri.UnescapeDataString(kv[1].Replace('+', ' '));
+            }
+            return null;
         }
     }
 

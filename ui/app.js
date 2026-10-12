@@ -42,6 +42,7 @@ const ICONS = {
   sun: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
   image: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>',
   download: '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>',
+  file: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>',
   moon: '<svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
 };
 
@@ -60,6 +61,7 @@ let chats = [];                   // index
 let chat = null;                  // current chat
 let streaming = null;             // { ctrl, msg }
 let pendingImages = [];
+let pendingDocs = [];             // [{ name, text }] attached documents
 
 /* ================= markdown ================= */
 const renderer = new marked.Renderer();
@@ -245,7 +247,7 @@ function renderEngine() {
   bar.classList.toggle('hidden', e.state !== 'loading');
   $('#loadFill').style.width = Math.max(5, e.progress || 0) + '%';
 
-  $('#attachBtn').classList.toggle('hidden', !(engine.state === 'ready' && engine.vision));
+  $('#attachBtn').classList.toggle('hidden', S.mode === 'image');
   if (engine.ram) $('#ramInfo').textContent = `זיכרון פנוי: ${fmtGB(engine.ram.free)} מתוך ${fmtGB(engine.ram.total)}`;
   updateSendBtn();
   if (!chat || !chat.messages.length) renderWelcome();
@@ -345,11 +347,35 @@ function groupOf(ts) {
   return d.toLocaleDateString('he-IL', { month: 'long', year: 'numeric' });
 }
 
+let searchHits = { q: '', map: {} };
+let searchTimer;
+function searchChats() {
+  renderChatList();
+  clearTimeout(searchTimer);
+  const q = $('#search').value.trim().toLowerCase();
+  if (q.length < 2) return;
+  searchTimer = setTimeout(async () => {
+    try {
+      const hits = await api('search?q=' + encodeURIComponent(q));
+      if ($('#search').value.trim().toLowerCase() !== q) return;
+      searchHits = { q, map: Object.fromEntries((hits || []).map(h => [h.id, h.snippet])) };
+      renderChatList();
+    } catch { }
+  }, 250);
+}
+
+function highlight(text, q) {
+  const i = text.toLowerCase().indexOf(q);
+  if (i < 0) return esc(text);
+  return esc(text.slice(0, i)) + '<mark>' + esc(text.slice(i, i + q.length)) + '</mark>' + esc(text.slice(i + q.length));
+}
+
 function renderChatList() {
   const list = $('#chatList');
   const q = $('#search').value.trim().toLowerCase();
   list.innerHTML = '';
-  const items = chats.filter(c => !q || (c.title || '').toLowerCase().includes(q));
+  const inText = q && searchHits.q === q ? searchHits.map : {};
+  const items = chats.filter(c => !q || (c.title || '').toLowerCase().includes(q) || inText[c.id]);
   if (!items.length) { list.append(el('div', 'empty-list', q ? 'לא נמצאו שיחות' : 'השיחות שלכם יופיעו כאן')); return; }
   const pinned = items.filter(c => c.pinned);
   const rest = items.filter(c => !c.pinned);
@@ -365,7 +391,8 @@ function renderChatList() {
     list.append(el('div', 'group-title', esc(title)));
     for (const c of arr) {
       const it = el('div', 'chat-item' + (chat && chat.id === c.id ? ' active' : ''));
-      it.innerHTML = `<span class="t" dir="auto">${esc(c.title || 'שיחה חדשה')}</span><button class="icon-btn more" title="אפשרויות">${ICONS.dots}</button>`;
+      const snip = inText[c.id] && !(c.title || '').toLowerCase().includes(q) ? `<span class="snip" dir="auto">${highlight(inText[c.id], q)}</span>` : '';
+      it.innerHTML = `<span class="t" dir="auto">${esc(c.title || 'שיחה חדשה')}${snip}</span><button class="icon-btn more" title="אפשרויות">${ICONS.dots}</button>`;
       it.onclick = e => { if (!e.target.closest('.more')) openChat(c.id); };
       $('.more', it).onclick = e => { e.stopPropagation(); chatMenu(c, it); };
       it.ondblclick = () => renameChat(c, it);
@@ -385,6 +412,7 @@ function chatMenu(c, item) {
   const add = (icon, text, fn, cls) => { const b = el('button', 'menu-item ' + (cls || ''), icon + '<span class="mi-main">' + text + '</span>'); b.onclick = e => { e.stopPropagation(); closeMenus(); fn(); }; m.append(b); };
   add(ICONS.edit, 'שינוי שם', () => renameChat(c, item));
   add(ICONS.pin, c.pinned ? 'ביטול הצמדה' : 'הצמדה', () => updateChatMeta(c.id, { pinned: !c.pinned }));
+  add(ICONS.download, 'ייצוא לקובץ', () => exportChat(c.id));
   add(ICONS.trash, 'מחיקה', () => deleteChat(c), 'danger');
   document.body.append(m);
   const mr = m.getBoundingClientRect();
@@ -412,6 +440,39 @@ async function updateChatMeta(id, patch) {
   if (!full) { try { full = await api('chats/' + id); } catch { return; } }
   Object.assign(full, patch);
   await persist(full, false);
+}
+
+/** Saves a chat as a Markdown file (opens in any editor, keeps lists, tables and code). */
+async function exportChat(id) {
+  let c = streaming && streaming.chat && streaming.chat.id === id ? streaming.chat : chat && chat.id === id ? chat : null;
+  if (!c) { try { c = await api('chats/' + id); } catch { toast('לא ניתן לפתוח את השיחה'); return; } }
+  const when = t => new Date(t).toLocaleString('he-IL');
+  const lines = [`# ${c.title || 'שיחה'}`, '', `> ${when(c.created || Date.now())} · צ'אט מקומי`, ''];
+  for (const m of c.messages || []) {
+    if (m.role === 'user') {
+      lines.push('## 🙂 אתם', '');
+      (m.docs || []).forEach(d => lines.push(`📄 ${d.name}`, ''));
+      if (m.images && m.images.length) lines.push(`🖼 ${m.images.length} תמונות מצורפות`, '');
+      lines.push(m.content || '', '');
+    } else {
+      lines.push('## 🤖 המודל', '');
+      const img = m.kind === 'image' ? m : m.image;
+      const text = m.kind === 'image' ? '' : splitThink(m.content, m.reasoning).text;
+      if (text) lines.push(text, '');
+      if (img) {
+        (img.images || []).forEach(u => lines.push(`![תמונה](http://localhost:${location.port}${u})`, ''));
+        if (img.prompt) lines.push(`*תיאור התמונה:* ${img.prompt}`, '');
+      }
+      if (m.after) lines.push(splitThink(m.after).text, '');
+      if (m.error) lines.push(`> ⚠ ${m.error}`, '');
+    }
+  }
+  const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
+  const a = el('a'); a.href = URL.createObjectURL(blob);
+  a.download = (c.title || 'שיחה').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80) + '.md';
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast('השיחה נשמרה בתיקיית ההורדות');
 }
 
 async function deleteChat(c) {
@@ -519,6 +580,11 @@ function buildMsg(m, idx) {
       const im = el('div', 'imgs');
       m.images.forEach(src => { const i = el('img'); i.src = src; im.append(i); });
       w.append(im);
+    }
+    if (m.docs && m.docs.length) {
+      const dl = el('div', 'doc-chips');
+      m.docs.forEach(d => dl.append(el('span', 'doc-chip', `${ICONS.file}<span>${esc(d.name)}</span>`)));
+      w.append(dl);
     }
     const b = el('div', 'bubble'); b.dir = 'auto'; b.textContent = m.content; w.append(b);
     const acts = el('div', 'msg-actions');
@@ -793,7 +859,7 @@ function editMessage(idx, w) {
   ok.onclick = () => {
     const v = ta.value.trim(); if (!v) return;
     chat.messages = chat.messages.slice(0, idx);
-    chat.messages.push({ role: 'user', content: v, images: m.images, kind: m.kind });
+    chat.messages.push({ role: 'user', content: v, images: m.images, docs: m.docs, kind: m.kind });
     renderMessages(false);
     m.kind === 'image' ? generateImage() : generate();
   };
@@ -814,7 +880,7 @@ function updateSendBtn() {
   const b = $('#sendBtn');
   if (streaming && (!streaming.chat || streaming.chat === chat)) { b.classList.add('stop'); b.disabled = false; b.title = 'עצירה (Esc)'; return; }
   b.classList.remove('stop'); b.title = 'שליחה';
-  b.disabled = !($('#input').value.trim() || pendingImages.length);
+  b.disabled = !($('#input').value.trim() || pendingImages.length || pendingDocs.some(d => d.text != null));
 }
 
 function autosize() {
@@ -830,16 +896,18 @@ async function send() {
     return;
   }
   const text = $('#input').value.trim();
-  if (!text && !pendingImages.length) return;
+  if (!text && !pendingImages.length && !pendingDocs.length) return;
+  if (pendingDocs.some(d => d.text == null)) { toast('רגע, עדיין קורא את הקובץ…'); return; }
   if (S.mode === 'image') return sendImage(text);
   if (!engine.model || engine.state === 'idle') { toast('קודם בוחרים מודל'); toggleModelMenu(); return; }
   if (engine.state === 'error') { toast('המודל לא נטען. בחרו מודל אחר או טענו מחדש.'); return; }
   if (!chat) newChat();
-  const msg = { role: 'user', content: text };
+  const msg = { role: 'user', content: text || (pendingDocs.length ? 'מה יש בקובץ? תן סיכום קצר וברור.' : '') };
   if (pendingImages.length) msg.images = pendingImages.slice();
+  if (pendingDocs.length) msg.docs = pendingDocs.map(d => ({ name: d.name, text: d.text }));
   chat.messages.push(msg);
-  if (chat.messages.length === 1 || chat.title === 'שיחה חדשה') chat.title = makeTitle(text);
-  $('#input').value = ''; pendingImages = []; renderAttachments(); autosize();
+  if (chat.messages.length === 1 || chat.title === 'שיחה חדשה') chat.title = makeTitle(text || ('📄 ' + pendingDocs[0].name));
+  $('#input').value = ''; pendingImages = []; pendingDocs = []; renderAttachments(); autosize();
   renderMessages();
   persist();
   generate();
@@ -875,16 +943,16 @@ function regenerate() {
 
 function estimateTokens(m) {
   // Hebrew tokenizes poorly in most models: be conservative.
-  const c = (typeof m.content === 'string' ? m.content : '') + (m.after || '') + ((m.image && m.image.prompt) || m.prompt || '');
+  const c = (typeof m.content === 'string' ? m.content : '') + (m.after || '') + ((m.image && m.image.prompt) || m.prompt || '') + docsBlock(m);
   return Math.ceil(c.length / 2.6) + 8 + (m.images && m.role === 'user' ? m.images.length * 700 : 0);
 }
 
 /** One stored message → the API messages that represent it. Pictures become a tool call + its result. */
 function toApi(m, idx, withTools) {
   if (m.role === 'user') {
-    let content = m.content;
+    let content = docsBlock(m) + m.content;
     if (m.images && m.images.length && engine.vision) {
-      content = [{ type: 'text', text: m.content || '' }, ...m.images.map(u => ({ type: 'image_url', image_url: { url: u } }))];
+      content = [{ type: 'text', text: content || '' }, ...m.images.map(u => ({ type: 'image_url', image_url: { url: u } }))];
     }
     return [{ role: 'user', content }];
   }
@@ -1034,7 +1102,7 @@ async function generate() {
     const userMsg = target.messages[target.messages.indexOf(msg) - 1] || {};
     const canDraw = imageToolAvailable();
     // the app itself recognizes picture requests; then the model is made to produce one (no "deciding")
-    const wantsImage = canDraw && looksLikeImageRequest(userMsg.content, target.messages.slice(0, -1), userMsg.images && userMsg.images.length);
+    const wantsImage = canDraw && looksLikeImageRequest(userMsg.content, target.messages.slice(0, -1), (userMsg.images && userMsg.images.length) || (userMsg.docs && userMsg.docs.length));
     let withTools = canDraw && !toolsBroken.has(engine.model);
     res = null;
     if (withTools) {
@@ -1369,12 +1437,86 @@ async function generateImage() {
 /* ================= attachments ================= */
 function renderAttachments() {
   const box = $('#attachments'); box.innerHTML = '';
+  pendingDocs.forEach((d, i) => {
+    const a = el('div', 'att doc');
+    const info = d.text == null ? 'קורא…' : `${num(d.text.length)} תווים`;
+    a.innerHTML = `${ICONS.file}<span class="n">${esc(d.name)}</span><span class="s">${info}</span>`;
+    const x = el('button', '', ICONS.x); x.title = 'הסרה';
+    x.onclick = () => { pendingDocs.splice(i, 1); renderAttachments(); updateSendBtn(); };
+    a.append(x); box.append(a);
+  });
   pendingImages.forEach((src, i) => {
     const a = el('div', 'att'); const img = el('img'); img.src = src;
     const x = el('button', '', ICONS.x); x.title = 'הסרה';
     x.onclick = () => { pendingImages.splice(i, 1); renderAttachments(); updateSendBtn(); };
     a.append(img, x); box.append(a);
   });
+}
+
+/* ================= attached documents ================= */
+const TEXT_FILE = /\.(txt|md|markdown|csv|tsv|json|xml|html?|py|js|mjs|ts|jsx|tsx|cs|java|kt|c|cc|cpp|h|hpp|css|scss|sql|log|ini|cfg|conf|ya?ml|toml|bat|cmd|ps1|sh|rb|go|rs|php|srt|vtt|tex)$/i;
+
+/** The documents of a message as text for the model, cut to what the context can hold. */
+function docsBlock(m) {
+  if (!m.docs || !m.docs.length) return '';
+  // about 60% of the context for documents (Hebrew is ~2.6 characters per token)
+  const room = Math.floor((engine.ctx || S.ctx || 8192) * 0.6 * 2.6);
+  const each = Math.floor(room / m.docs.length);
+  return m.docs.map(d => {
+    const t = d.text || '';
+    const cut = t.length > each;
+    return `[קובץ מצורף: ${d.name}]\n${cut ? t.slice(0, each) : t}\n[סוף הקובץ${cut ? ' — נחתך כי הוא ארוך מגודל ההקשר' : ''}]\n\n`;
+  }).join('');
+}
+
+async function readDocText(file) {
+  const name = file.name.toLowerCase();
+  if (name.endsWith('.pdf')) {
+    const pdfjs = await import('/vendor/pdfjs/pdf.min.mjs');
+    pdfjs.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+    const pages = [];
+    for (let i = 1; i <= doc.numPages; i++) {
+      const tc = await (await doc.getPage(i)).getTextContent();
+      pages.push(tc.items.map(it => it.str + (it.hasEOL ? '\n' : '')).join(''));
+    }
+    return pages.join('\n\n').replace(/[ \t]+\n/g, '\n').trim();
+  }
+  if (name.endsWith('.docx')) {
+    const r = await fetch('/api/extract-docx', { method: 'POST', body: file });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((j && j.error) || 'לא הצלחתי לקרוא את קובץ ה-Word');
+    return j.text || '';
+  }
+  if (TEXT_FILE.test(name) || (file.type || '').startsWith('text/')) {
+    const buf = await file.arrayBuffer();
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+    catch { return new TextDecoder('windows-1255').decode(buf); }   // older Hebrew text files
+  }
+  throw new Error('אפשר לצרף קובצי טקסט, Word (‎.docx) או PDF');
+}
+
+async function addDocFile(file) {
+  if (file.size > 50 * 1048576) { toast('הקובץ גדול מדי (מעל 50MB)'); return; }
+  const d = { name: file.name, text: null };
+  pendingDocs.push(d); renderAttachments(); updateSendBtn();
+  try {
+    d.text = await readDocText(file);
+    if (!d.text.trim()) { toast(`לא נמצא טקסט ב-${file.name}. אולי זה מסמך סרוק (תמונה)`, 5000); pendingDocs.splice(pendingDocs.indexOf(d), 1); }
+    else {
+      const room = Math.floor((engine.ctx || S.ctx || 8192) * 0.6 * 2.6);
+      if (d.text.length > room) toast(`הקובץ ארוך: המודל יראה רק בערך ${num(room)} תווים ראשונים. אפשר להגדיל את "גודל ההקשר" בהגדרות.`, 6000);
+    }
+  } catch (e) {
+    pendingDocs.splice(pendingDocs.indexOf(d), 1);
+    toast(e.message || 'לא הצלחתי לקרוא את הקובץ', 5000);
+  }
+  renderAttachments(); updateSendBtn();
+}
+
+function addFile(file) {
+  if (!file) return;
+  if ((file.type || '').startsWith('image/')) addImageFile(file); else addDocFile(file);
 }
 
 function addImageFile(file) {
@@ -1404,14 +1546,14 @@ function wire() {
   });
   input.addEventListener('paste', e => {
     const files = [...(e.clipboardData && e.clipboardData.files || [])].filter(f => f.type.startsWith('image/'));
-    if (files.length) { e.preventDefault(); files.forEach(addImageFile); }
+    if (files.length) { e.preventDefault(); files.forEach(addFile); }
   });
   $('#composer').addEventListener('dragover', e => e.preventDefault());
-  $('#composer').addEventListener('drop', e => { e.preventDefault(); [...e.dataTransfer.files].forEach(addImageFile); });
+  $('#composer').addEventListener('drop', e => { e.preventDefault(); [...e.dataTransfer.files].forEach(addFile); });
   $('#memUnload').onclick = async () => { await api('image-unload', { method: 'POST' }); toast('מודל התמונות נפרק. הוא ייטען שוב כשתבקשו תמונה.'); pollState(); };
   $('#sendBtn').onclick = () => streaming && (!streaming.chat || streaming.chat === chat) ? stopStreaming() : send();
   $('#attachBtn').onclick = () => $('#fileInput').click();
-  $('#fileInput').onchange = e => { [...e.target.files].forEach(addImageFile); e.target.value = ''; };
+  $('#fileInput').onchange = e => { [...e.target.files].forEach(addFile); e.target.value = ''; };
 
   $('#newChat').onclick = newChat;
   $('#modeBtn').onclick = async () => {
@@ -1428,7 +1570,7 @@ function wire() {
     showModal('log', `<pre class="log">${esc(t || 'היומן ריק.')}</pre>`);
     const p = $('pre.log'); p.scrollTop = p.scrollHeight;
   };
-  $('#search').oninput = renderChatList;
+  $('#search').oninput = searchChats;
   $('#collapseSide').onclick = () => saveSettings({ sideHidden: true });
   $('#expandSide').onclick = () => saveSettings({ sideHidden: false });
   $('#themeBtn').onclick = () => saveSettings({ theme: S.theme === 'light' ? 'dark' : 'light' });

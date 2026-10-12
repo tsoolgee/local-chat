@@ -96,7 +96,10 @@ function buildCard(m, ram) {
     c.append(lab);
   }
 
-  if (active(job)) {
+  if (active(job) && job.verify >= 0) {
+    c.append(el('div', 'prog', `<div style="width:${(job.verify * 100).toFixed(1)}%"></div>`));
+    c.append(el('div', 'prog-text', `<span>בודק שהקובץ תקין… ${(job.verify * 100).toFixed(0)}%</span>`));
+  } else if (active(job)) {
     const pct = job.total ? Math.min(100, job.done / job.total * 100) : 0;
     const eta = job.speed > 0 ? fmtEta((job.total - job.done) / job.speed) : '';
     c.append(el('div', 'prog', `<div style="width:${pct.toFixed(1)}%"></div>`));
